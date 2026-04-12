@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WaniAR — Wani_game.glb ビューア</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; background: #1a1d24; color: #e8eaef; }
+    #c { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; left: 12px; top: 12px; max-width: min(420px, 92vw);
+      font-size: 12px; line-height: 1.45; background: rgba(0,0,0,.55); padding: 10px 12px; border-radius: 8px;
+      pointer-events: none;
+    }
+    #hud kbd { background: #333; padding: 1px 5px; border-radius: 4px; }
+    #err {
+      position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: #1a1d24; color: #f88; padding: 24px; text-align: center; white-space: pre-wrap;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.175.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hud">
+    <strong>Wani_game.glb</strong> — WASD/矢印 移動 · Shift 走り · Space 攻撃 · M 口 · T 尻尾 · J/L 首左右 · I/K 首上下 · R リセット<br />
+    マウスドラッグ カメラ · ホイール ズーム<br />
+    <span id="status">読み込み中…</span>
+  </div>
+  <div id="err"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const errEl = document.getElementById('err');
+    const statusEl = document.getElementById('status');
+
+    function resolveModelUrl() {
+      return new URL('./Wani_game.glb', import.meta.url).href;
+    }
+
+    if (typeof location !== 'undefined' && location.protocol === 'file:') {
+      errEl.style.display = 'flex';
+      errEl.textContent = 'file:// では GLB を読み込めません。プロジェクトルートで npm run viewer を実行し、http://localhost:3000/viewer を開いてください。';
+      throw new Error('file protocol');
+    }
+
+    const canvas = document.getElementById('c');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1d24);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 200);
+    camera.position.set(1.2, 0.85, 1.6);
+
+    const controls = new OrbitControls(camera, canvas);
+    controls.target.set(0, 0.35, 0);
+    controls.update();
+
+    scene.add(new THREE.HemisphereLight(0x8899cc, 0x444422, 0.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+    sun.position.set(3, 6, 4);
+    sun.castShadow = true;
+    scene.add(sun);
+
+    const GROUND_Y = 0;
+    const grid = new THREE.GridHelper(40, 40, 0x334455, 0x223344);
+    grid.position.y = GROUND_Y;
+    scene.add(grid);
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(200, 200),
+      new THREE.MeshStandardMaterial({ color: 0x252830, roughness: 1, metalness: 0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = GROUND_Y - 0.001;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const keys = Object.create(null);
+    window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+    window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    const clock = new THREE.Clock();
+    const vFwd = new THREE.Vector3();
+    const vRight = new THREE.Vector3();
+    const vMove = new THREE.Vector3();
+    const box = new THREE.Box3();
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    const qNeck = new THREE.Quaternion();
+
+    let model = null;
+    let mixer = null;
+    const actions = {};
+    let modelBaseY = 0;
+    let headBone = null;
+
+    let mouthOpen = false;
+    let tailWag = false;
+    let attackPending = false;
+
+    let neckTargetYaw = 0;
+    let neckTargetPitch = 0;
+    const neckReturn = 4.0;
+
+    const CLIP_NAMES = [
+      'Walk', 'Run', 'Idle',
+      'Walk_MouthOpen', 'Run_MouthOpen', 'Idle_MouthOpen',
+      'Attack', 'TailWag',
+    ];
+
+    function setupActions(gltf) {
+      mixer = new THREE.AnimationMixer(gltf.scene);
+      mixer.addEventListener('finished', (e) => {
+        if (e.action === actions.Attack) e.action.fadeOut(0.18);
+      });
+      for (const clip of gltf.animations) {
+        const a = mixer.clipAction(clip);
+        a.enabled = true;
+        if (clip.name === 'Attack') {
+          a.setLoop(THREE.LoopOnce, 1);
+          a.clampWhenFinished = true;
+        } else {
+          a.setLoop(THREE.LoopRepeat, Infinity);
+        }
+        a.play();
+        a.setEffectiveWeight(0);
+        actions[clip.name] = a;
+      }
+      for (const n of CLIP_NAMES) {
+        if (!actions[n]) console.warn('Missing clip:', n);
+      }
+      actions.Idle.setEffectiveWeight(1);
+    }
+
+    function smoothToward(current, target, dt, speed) {
+      const t = 1 - Math.exp(-speed * dt);
+      return current + (target - current) * t;
+    }
+
+    function updateNeckInput(dt) {
+      const yawIn = (keys['KeyJ'] ? 1 : 0) - (keys['KeyL'] ? 1 : 0);
+      const pitchIn = (keys['KeyI'] ? 1 : 0) - (keys['KeyK'] ? 1 : 0);
+      const rate = 1.8;
+      neckTargetYaw += yawIn * rate * dt;
+      neckTargetPitch += pitchIn * rate * dt;
+      if (!yawIn) neckTargetYaw = smoothToward(neckTargetYaw, 0, dt, neckReturn);
+      if (!pitchIn) neckTargetPitch = smoothToward(neckTargetPitch, 0, dt, neckReturn);
+    }
+
+    function applyNeckControl(dt) {
+      if (!headBone) return;
+      const attackW = actions.Attack ? actions.Attack.getEffectiveWeight() : 0;
+      const runW = actions.Run ? actions.Run.getEffectiveWeight() : 0;
+      const runMW = actions.Run_MouthOpen ? actions.Run_MouthOpen.getEffectiveWeight() : 0;
+      const motionScale = THREE.MathUtils.clamp(1 - 0.65 * attackW - 0.35 * (runW + runMW), 0.35, 1);
+
+      const maxYaw = THREE.MathUtils.degToRad(22) * motionScale;
+      const maxUp = THREE.MathUtils.degToRad(14) * motionScale;
+      const maxDown = THREE.MathUtils.degToRad(8) * motionScale;
+      const yaw = THREE.MathUtils.clamp(neckTargetYaw, -maxYaw, maxYaw);
+      const pitch = THREE.MathUtils.clamp(neckTargetPitch, -maxDown, maxUp);
+
+      euler.set(pitch, yaw, 0, 'YXZ');
+      qNeck.setFromEuler(euler);
+      headBone.quaternion.multiplyQuaternions(qNeck, headBone.quaternion);
+    }
+
+    function setLocomotionWeights(speed, mouth) {
+      const run = keys['ShiftLeft'] || keys['ShiftRight'];
+      const fast = run && speed > 0.08;
+      const walk = !fast && speed > 0.04;
+      const idle = !walk && !fast;
+
+      const w = {
+        Idle: idle && !mouth ? 1 : 0,
+        Walk: walk && !mouth ? 1 : 0,
+        Run: fast && !mouth ? 1 : 0,
+        Idle_MouthOpen: idle && mouth ? 1 : 0,
+        Walk_MouthOpen: walk && mouth ? 1 : 0,
+        Run_MouthOpen: fast && mouth ? 1 : 0,
+      };
+      for (const [name, wt] of Object.entries(w)) {
+        if (actions[name]) actions[name].setEffectiveWeight(wt);
+      }
+    }
+
+    function updateCharacter(dt) {
+      if (!model) return;
+
+      vMove.set(0, 0, 0);
+      const m = 2.2 * dt;
+      if (keys['KeyW'] || keys['ArrowUp']) vMove.z -= m;
+      if (keys['KeyS'] || keys['ArrowDown']) vMove.z += m;
+      if (keys['KeyA'] || keys['ArrowLeft']) vMove.x -= m;
+      if (keys['KeyD'] || keys['ArrowRight']) vMove.x += m;
+
+      const speed = vMove.length();
+      if (speed > 1e-6) {
+        vMove.normalize().multiplyScalar(m);
+        camera.getWorldDirection(vFwd);
+        vFwd.y = 0;
+        vFwd.normalize();
+        vRight.crossVectors(vFwd, new THREE.Vector3(0, 1, 0)).normalize();
+        const wx = vMove.x * vRight.x + vMove.z * vFwd.x;
+        const wz = vMove.x * vRight.z + vMove.z * vFwd.z;
+        model.position.x += wx;
+        model.position.z += wz;
+        const targetYaw = Math.atan2(wx, wz);
+        model.rotation.y = smoothToward(model.rotation.y, targetYaw, dt, 12);
+      }
+
+      setLocomotionWeights(speed, mouthOpen);
+
+      if (actions.TailWag) {
+        actions.TailWag.setEffectiveWeight(tailWag ? 0.85 : 0);
+      }
+
+      if (attackPending && actions.Attack) {
+        attackPending = false;
+        actions.Attack.reset();
+        actions.Attack.setEffectiveWeight(1);
+        actions.Attack.fadeIn(0.06);
+        actions.Attack.play();
+      }
+
+      mixer.update(dt);
+
+      updateNeckInput(dt);
+      applyNeckControl(dt);
+
+      box.setFromObject(model);
+      const minY = box.min.y;
+      if (minY < GROUND_Y) {
+        model.position.y += GROUND_Y - minY;
+      } else {
+        model.position.y = smoothToward(model.position.y, modelBaseY, dt, 6);
+      }
+
+      statusEl.textContent = `位置 y=${model.position.y.toFixed(3)} 口=${mouthOpen ? '開' : '閉'} 尻尾=${tailWag ? 'ON' : 'OFF'}`;
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyM') mouthOpen = !mouthOpen;
+      if (e.code === 'KeyT') tailWag = !tailWag;
+      if (e.code === 'Space') { e.preventDefault(); attackPending = true; }
+      if (e.code === 'KeyR' && model) {
+        model.position.set(0, modelBaseY, 0);
+        model.rotation.y = 0;
+        neckTargetYaw = neckTargetPitch = 0;
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const modelUrl = resolveModelUrl();
+    const loader = new GLTFLoader();
+    loader.load(
+      modelUrl,
+      (gltf) => {
+        model = gltf.scene;
+        model.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        scene.add(model);
+
+        box.setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.sub(center);
+        model.position.y = GROUND_Y - box.min.y;
+        modelBaseY = model.position.y;
+
+        setupActions(gltf);
+        headBone = model.getObjectByName('head');
+        if (!headBone) console.warn('Bone "head" not found');
+
+        statusEl.textContent = '読み込み完了';
+      },
+      undefined,
+      (err) => {
+        errEl.style.display = 'flex';
+        errEl.textContent = `モデル読み込み失敗\nURL: ${modelUrl}\n${err?.message || err}`;
+        statusEl.textContent = 'エラー';
+      }
+    );
+
+    function loop() {
+      requestAnimationFrame(loop);
+      const dt = Math.min(clock.getDelta(), 0.1);
+      controls.update();
+      updateCharacter(dt);
+      renderer.render(scene, camera);
+    }
+    loop();
+  </script>
+</body>
+</html>

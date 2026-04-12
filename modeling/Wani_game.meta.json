@@ -1,0 +1,31 @@
+{
+  "source": "Walking_wani.glb",
+  "clips": [
+    "Walk",
+    "Run",
+    "Idle",
+    "Walk_MouthOpen",
+    "Run_MouthOpen",
+    "Idle_MouthOpen",
+    "Attack",
+    "TailWag"
+  ],
+  "bones": {
+    "head": "head",
+    "jaw_upper": "jaw_upper",
+    "jaw_lower": "jaw_lower",
+    "tail": [
+      "tail",
+      "tailstart",
+      "tail1",
+      "tail2",
+      "tail3"
+    ]
+  },
+  "jawSplit": {
+    "mouthLineY": 0.00218,
+    "skullLineY": 0.0027,
+    "snoutRegionZMin": 0.0042,
+    "snoutRegionZMax": 0.0084
+  }
+}

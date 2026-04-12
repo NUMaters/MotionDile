@@ -1,0 +1,5 @@
+node_modules/
+dist/
+# 開発時に modeling からコピーされる（約20MB）。リポジトリには含めない
+public/modeling/Wani_game.glb
+medea-pipeline/data/hand-dataset.json

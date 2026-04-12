@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "createdAt": "2026-04-12T00:00:00.000Z",
+  "samples": [
+    {
+      "avgCurl": 0.82,
+      "tiltAngle": 0.05,
+      "pitchAngle": -0.04,
+      "mouthLabel": 1,
+      "targetYaw": 0.08,
+      "targetPitch": 0.04
+    },
+    {
+      "avgCurl": 0.33,
+      "tiltAngle": -0.02,
+      "pitchAngle": 0.03,
+      "mouthLabel": 0,
+      "targetYaw": -0.04,
+      "targetPitch": -0.03
+    },
+    {
+      "avgCurl": 0.75,
+      "tiltAngle": 0.35,
+      "pitchAngle": -0.12,
+      "mouthLabel": 1,
+      "targetYaw": 0.45,
+      "targetPitch": 0.20
+    },
+    {
+      "avgCurl": 0.36,
+      "tiltAngle": -0.31,
+      "pitchAngle": 0.10,
+      "mouthLabel": 0,
+      "targetYaw": -0.40,
+      "targetPitch": -0.16
+    }
+  ]
+}
+
