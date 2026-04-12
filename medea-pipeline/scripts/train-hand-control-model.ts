@@ -1,22 +1,72 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { dirname, resolve } from 'path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
-function mean(values) {
+type MouthLabel = 0 | 1;
+
+type HandSample = {
+  mouthLabel?: MouthLabel | number;
+  avgCurl?: number;
+  tiltAngle?: number;
+  targetYaw?: number;
+  pitchAngle?: number;
+  targetPitch?: number;
+};
+
+type DatasetFile = {
+  samples?: HandSample[];
+};
+
+type LinearFit = { a: number; b: number };
+
+type TrainStats = {
+  totalSamples: number;
+  openSamples: number;
+  closedSamples: number;
+  yawSamples: number;
+  pitchSamples: number;
+  previousSamples?: number;
+  mergedSamples?: number;
+};
+
+type TrainedMouth = {
+  closedCurl: number;
+  openCurl: number;
+  openThreshold: number;
+};
+
+type TrainedNeck = {
+  neutralTilt: number;
+  yawGain: number;
+  maxYaw: number;
+  neutralPitchAngle: number;
+  pitchGain: number;
+  maxPitch: number;
+};
+
+type TrainedModel = {
+  version: number;
+  trainedAt: string;
+  stats: TrainStats;
+  mouth: TrainedMouth;
+  neck: TrainedNeck;
+};
+
+function mean(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function clamp(v, min, max) {
+function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-function blendValue(prev, next, prevWeight, nextWeight) {
+function blendValue(prev: number, next: number, prevWeight: number, nextWeight: number): number {
   const total = prevWeight + nextWeight;
   if (total <= 0) return next;
   return ((prev * prevWeight) + (next * nextWeight)) / total;
 }
 
-function linearFit(xs, ys) {
+function linearFit(xs: number[], ys: number[]): LinearFit {
   const n = Math.min(xs.length, ys.length);
   if (n < 2) return { a: 1, b: 0 };
   const mx = mean(xs);
@@ -33,7 +83,7 @@ function linearFit(xs, ys) {
   return { a, b };
 }
 
-function train(samples) {
+function train(samples: HandSample[]): TrainedModel {
   const open = samples.filter((s) => s.mouthLabel === 1).map((s) => Number(s.avgCurl));
   const closed = samples.filter((s) => s.mouthLabel === 0).map((s) => Number(s.avgCurl));
 
@@ -46,11 +96,11 @@ function train(samples) {
 
   const yawFit = linearFit(
     yawSamples.map((s) => Number(s.tiltAngle)),
-    yawSamples.map((s) => Number(s.targetYaw))
+    yawSamples.map((s) => Number(s.targetYaw)),
   );
   const pitchFit = linearFit(
     pitchSamples.map((s) => Number(s.pitchAngle)),
-    pitchSamples.map((s) => Number(s.targetPitch))
+    pitchSamples.map((s) => Number(s.targetPitch)),
   );
 
   const neutralTilt = yawFit.a !== 0 ? -yawFit.b / yawFit.a : 0;
@@ -84,9 +134,14 @@ function train(samples) {
   };
 }
 
-function mergeWithPreviousModel(prevModel, newModel) {
+function mergeWithPreviousModel(prevModel: unknown, newModel: TrainedModel): TrainedModel {
   if (!prevModel || typeof prevModel !== 'object') return newModel;
-  const prevCount = Number(prevModel?.stats?.totalSamples || 0);
+  const prev = prevModel as {
+    stats?: { totalSamples?: number };
+    mouth?: Partial<TrainedMouth>;
+    neck?: Partial<TrainedNeck>;
+  };
+  const prevCount = Number(prev?.stats?.totalSamples || 0);
   const nextCount = Number(newModel?.stats?.totalSamples || 0);
   if (prevCount <= 0 || nextCount <= 0) return newModel;
 
@@ -99,34 +154,34 @@ function mergeWithPreviousModel(prevModel, newModel) {
       mergedSamples: prevCount + nextCount,
     },
     mouth: {
-      closedCurl: blendValue(prevModel?.mouth?.closedCurl ?? newModel.mouth.closedCurl, newModel.mouth.closedCurl, prevCount, nextCount),
-      openCurl: blendValue(prevModel?.mouth?.openCurl ?? newModel.mouth.openCurl, newModel.mouth.openCurl, prevCount, nextCount),
-      openThreshold: blendValue(prevModel?.mouth?.openThreshold ?? newModel.mouth.openThreshold, newModel.mouth.openThreshold, prevCount, nextCount),
+      closedCurl: blendValue(prev.mouth?.closedCurl ?? newModel.mouth.closedCurl, newModel.mouth.closedCurl, prevCount, nextCount),
+      openCurl: blendValue(prev.mouth?.openCurl ?? newModel.mouth.openCurl, newModel.mouth.openCurl, prevCount, nextCount),
+      openThreshold: blendValue(prev.mouth?.openThreshold ?? newModel.mouth.openThreshold, newModel.mouth.openThreshold, prevCount, nextCount),
     },
     neck: {
-      neutralTilt: blendValue(prevModel?.neck?.neutralTilt ?? newModel.neck.neutralTilt, newModel.neck.neutralTilt, prevCount, nextCount),
-      yawGain: blendValue(prevModel?.neck?.yawGain ?? newModel.neck.yawGain, newModel.neck.yawGain, prevCount, nextCount),
-      maxYaw: clamp(blendValue(prevModel?.neck?.maxYaw ?? newModel.neck.maxYaw, newModel.neck.maxYaw, prevCount, nextCount), 0.3, 1.2),
-      neutralPitchAngle: blendValue(prevModel?.neck?.neutralPitchAngle ?? newModel.neck.neutralPitchAngle, newModel.neck.neutralPitchAngle, prevCount, nextCount),
-      pitchGain: blendValue(prevModel?.neck?.pitchGain ?? newModel.neck.pitchGain, newModel.neck.pitchGain, prevCount, nextCount),
-      maxPitch: clamp(blendValue(prevModel?.neck?.maxPitch ?? newModel.neck.maxPitch, newModel.neck.maxPitch, prevCount, nextCount), 0.2, 1.0),
+      neutralTilt: blendValue(prev.neck?.neutralTilt ?? newModel.neck.neutralTilt, newModel.neck.neutralTilt, prevCount, nextCount),
+      yawGain: blendValue(prev.neck?.yawGain ?? newModel.neck.yawGain, newModel.neck.yawGain, prevCount, nextCount),
+      maxYaw: clamp(blendValue(prev.neck?.maxYaw ?? newModel.neck.maxYaw, newModel.neck.maxYaw, prevCount, nextCount), 0.3, 1.2),
+      neutralPitchAngle: blendValue(prev.neck?.neutralPitchAngle ?? newModel.neck.neutralPitchAngle, newModel.neck.neutralPitchAngle, prevCount, nextCount),
+      pitchGain: blendValue(prev.neck?.pitchGain ?? newModel.neck.pitchGain, newModel.neck.pitchGain, prevCount, nextCount),
+      maxPitch: clamp(blendValue(prev.neck?.maxPitch ?? newModel.neck.maxPitch, newModel.neck.maxPitch, prevCount, nextCount), 0.2, 1.0),
     },
   };
 }
 
-function main() {
+function main(): void {
   const inPath = resolve(process.argv[2] || 'medea-pipeline/data/hand-dataset.json');
   const outPath = resolve(process.argv[3] || 'public/models/hand-control-model.json');
   const mirrorPath = resolve('medea-pipeline/models/hand-control-model.json');
 
-  const raw = JSON.parse(readFileSync(inPath, 'utf8'));
+  const raw = JSON.parse(readFileSync(inPath, 'utf8')) as DatasetFile;
   const samples = Array.isArray(raw?.samples) ? raw.samples : [];
   if (!samples.length) {
     throw new Error(`No samples found: ${inPath}`);
   }
 
   const newModel = train(samples);
-  let prevModel = null;
+  let prevModel: unknown = null;
   try {
     prevModel = JSON.parse(readFileSync(outPath, 'utf8'));
   } catch {
@@ -139,10 +194,10 @@ function main() {
   writeFileSync(mirrorPath, `${JSON.stringify(model, null, 2)}\n`, 'utf8');
   console.log(`[pipeline] trained model written to: ${outPath}`);
   console.log(`[pipeline] mirror written to: ${mirrorPath}`);
-  if (prevModel?.stats?.totalSamples) {
-    console.log(`[pipeline] merged with previous model (${prevModel.stats.totalSamples} samples).`);
+  const prevStats = (prevModel as { stats?: { totalSamples?: number } } | null)?.stats;
+  if (prevStats?.totalSamples) {
+    console.log(`[pipeline] merged with previous model (${prevStats.totalSamples} samples).`);
   }
 }
 
 main();
-

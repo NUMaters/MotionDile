@@ -12,7 +12,7 @@
     button { padding: 8px 10px; margin: 4px 4px 0 0; }
     input[type="range"] { width: 100%; }
     #stage { position: relative; display: flex; align-items: center; justify-content: center; }
-    #video, #overlay { width: min(960px, 100%); max-height: 95vh; transform: scaleX(-1); border-radius: 8px; }
+    #video, #overlay { width: min(960px, 100%); max-height: 95vh; border-radius: 8px; }
     #overlay { position: absolute; pointer-events: none; }
     textarea { width: 100%; min-height: 180px; background: #000; color: #0f0; }
     .small { font-size: 12px; color: #aaa; }
@@ -177,6 +177,11 @@
       return [...baseSamples, ...sessionSamples];
     }
 
+    /** ゲーム本体の main.ts と同じ。非ミラー映像で首・口特徴の上下左右を体感に合わせる */
+    function landmarksForHandControl(lm) {
+      return lm.map((p) => ({ x: 1 - p.x, y: 1 - p.y, z: p.z }));
+    }
+
     function extractFeatures(lm) {
       const wrist = lm[0];
       const midMCP = lm[9];
@@ -282,9 +287,8 @@
       const stream = await openCameraStreamPreferRear();
       video.srcObject = stream;
       await video.play();
-      // 学習画面も常に左右反転表示
-      video.style.transform = 'scaleX(-1)';
-      overlay.style.transform = 'scaleX(-1)';
+      video.style.transform = '';
+      overlay.style.transform = '';
       overlay.width = video.videoWidth || 640;
       overlay.height = video.videoHeight || 480;
 
@@ -327,7 +331,7 @@
         return;
       }
       draw(lm);
-      lastFeatures = extractFeatures(lm);
+      lastFeatures = extractFeatures(landmarksForHandControl(lm));
     }
     requestAnimationFrame(loop);
 

@@ -103,6 +103,17 @@ export default defineConfig({
         target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
+      '/game-api': {
+        target: 'http://127.0.0.1:8090',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/game-api/, '/api'),
+      },
+      '/game-ws': {
+        target: 'ws://127.0.0.1:8090',
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/game-ws/, '/ws'),
+      },
     },
   },
 });

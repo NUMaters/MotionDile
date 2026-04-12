@@ -40,20 +40,25 @@
 
 - **口の開閉**: 手を開く（パー）→ 口が開く / 手を閉じる（グー）→ 口が閉じる（各指先のMCP関節からの伸び具合で判定）
 - **首の向き**: 手を左右に傾けると首が傾いた方向へ曲がる（手首→中指MCP のベクトル傾き＝yaw）。手を前後に倒すと首が上下する（z 軸成分＝pitch）
-- 画面右上にカメラプレビュー＋ランドマーク可視化を常時表示
+- 画面右上にカメラプレビュー＋ランドマーク可視化を常時表示（**CSS の左右反転は行わず**、映像とランドマークが一致するよう素のストリーム向きで表示）
+- 首・口の制御だけ、正規化ランドマークを **`(x,y) → (1-x, 1-y)`** に写してから特徴量を計算（非ミラー映像でもジェスチャーとワニの向きが対応しやすくなる。`medea-pipeline/collect.html` も同じ処理で学習データと整合）
 - スマートフォンは **外カメラ優先** で起動（失敗時は内カメラへフォールバック）
-- 手が検出されていない間は従来のボタン・キーボード操作で口を制御可能
+- 手が検出されていない間は **PC の `M` キー**で口の開閉を切り替え可能（スマホは手認識またはカメラ未起動時は口は閉じたまま）
 
 ビューアは **`file://` で開かないでください**（GLB が読み込めません）。`npm run viewer` で `http://localhost:3000/viewer` を開きます。
 
 ## 技術スタック
 
-- **Three.js v0.175** — 3D レンダリング・アニメーション（WebGL）
+- **Three.js v0.175** — 3D レンダリング・アニメーション（WebGL）。エディタ用の型は **@types/three**（three 本体の npm パッケージに `.d.ts` が同梱されない構成向け）
 - **@mediapipe/tasks-vision** — MediaPipe Hand Landmarker（ブラウザカメラ＋手認識で口開閉・首の向きを制御）
 - **@gltf-transform/core v4.3** — glTF/GLB ファイルのプログラム的な加工・生成
 - **glTF 2.0 (GLB)** — 3D モデルフォーマット（スキンメッシュ + ボーンアニメーション）
 - **medea-pipeline（独自）** — 手ジェスチャー学習データ収集・パラメータ学習・ゲーム反映
-- **Vite v6.2** — 開発サーバー・ビルドツール
+- **TypeScript v5.8** — ゲーム本体（`game/frontend/src/main.ts`）と学習スクリプト（`medea-pipeline/scripts/train-hand-control-model.ts`）の型付け
+- **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
+- **Go + Gin** — `game/backend` の REST API（ルーム参加/退出/スナップショット）
+- **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）
+- **Vite v6.2** — 開発サーバー・ビルドツール（`.ts` をそのままトランスパイル）
 - **serve** — 静的 HTTP サーバー（ビューア配信）
 
 ### 3D モデルパイプライン
@@ -118,6 +123,7 @@ npm install
 npm run build:model   # Wani_game.glb を生成
 npm run viewer        # http://localhost:3000/viewer でビューア起動
 npm run dev           # Go backend(8080) + Vite frontend(5173~) を同時起動
+npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + WebSocket, 8090）
 npm run pipeline:train:example  # サンプルデータから手モデル生成（public/models/hand-control-model.json）
 ```
 
@@ -129,6 +135,14 @@ npm run pipeline:train:example  # サンプルデータから手モデル生成�
 4. JSON出力時に開発サーバーの `/api/pipeline/train` が自動実行され、`public/models/hand-control-model.json` を更新  
 5. ゲーム読み込み時に自動反映されます（未配置時はデフォルトパラメータ）  
 6. 既存の `hand-control-model.json` がある場合は、**前モデルへ追加学習（重み付きマージ）**されます
+
+### マルチプレイ同期（game/backend）
+
+1. `npm run dev:game-backend` を起動（`127.0.0.1:8090`）
+2. 別ターミナルで `npm run dev` を起動（Vite は `/game-api` と `/game-ws` を game backend へプロキシ）
+3. 複数端末で `https://<PC-IP>:5173/?room=lobby` を開く
+4. 同じ `room` クエリの端末同士で、移動と向きがリアルタイム同期されます
+5. 他プレイヤーは読み込み完了後に **ワニ実モデル** で表示されます（読み込み前は一時的に簡易マーカー）
 
 ### スマホでゲームが「ずっと読み込み中」になる場合
 
@@ -144,8 +158,12 @@ npm run pipeline:train:example  # サンプルデータから手モデル生成�
 ```
 WaniAR/
 ├── game/
-│   └── frontend/
-│       └── src/main.ts        ← ゲーム frontend エントリ（TypeScript）
+│   ├── frontend/
+│   │   └── src/main.ts        ← ゲーム frontend エントリ（TypeScript）
+│   └── backend/               ← ゲーム同期バックエンド（Go + Gin + WebSocket）
+│       ├── cmd/server/main.go
+│       ├── internal/...
+│       └── README.md
 ├── modeling/                 ← モデル調整・ビューアをすべてここに集約
 │   ├── README.md             ← modeling 用の短いガイド
 │   ├── Walking_wani.glb      ← ソースモデル（歩行アニメーション付き）
@@ -164,8 +182,8 @@ WaniAR/
 │   │   └── cmd/server/main.go ← 学習データ保存 + 学習実行 API（Go）
 │   ├── data/                  ← 収集データ（JSON）
 │   ├── models/                ← 学習済みモデル（ミラー）
-│   └── scripts/train-hand-control-model.mjs
-├── index.html / src/         ← 既存互換エントリ（内部で game/frontend を読み込み）
+│   └── scripts/train-hand-control-model.ts
+├── index.html                ← Vite エントリ（`/game/frontend/src/main.ts` を読み込み）
 ├── public/models/             ← ゲームが読み込む hand-control-model.json
 ├── vite.config.js
 ├── package.json

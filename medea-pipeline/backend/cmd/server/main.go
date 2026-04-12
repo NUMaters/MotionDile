@@ -64,7 +64,7 @@ func trainHandler(w http.ResponseWriter, r *http.Request) {
 
 	datasetPath := filepath.Join(projectRoot, "medea-pipeline", "data", "hand-dataset.json")
 	modelPath := filepath.Join(projectRoot, "public", "models", "hand-control-model.json")
-	trainScript := filepath.Join(projectRoot, "medea-pipeline", "scripts", "train-hand-control-model.mjs")
+	trainScript := filepath.Join(projectRoot, "medea-pipeline", "scripts", "train-hand-control-model.ts")
 
 	if err := os.MkdirAll(filepath.Dir(datasetPath), 0o755); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"ok": false, "message": err.Error()})
@@ -83,7 +83,7 @@ func trainHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("node", trainScript, datasetPath, modelPath)
+	cmd := exec.Command("npx", "--yes", "tsx", trainScript, datasetPath, modelPath)
 	cmd.Dir = projectRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
