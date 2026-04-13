@@ -10,6 +10,7 @@
     "dev:frontend": "vite",
     "dev:backend": "cd medea-pipeline/backend && go run ./cmd/server",
     "dev:game-backend": "cd game/backend && go run ./cmd/server",
+    "dev:all": "concurrently -k -n game,medea,frontend \"npm:dev:game-backend\" \"npm:dev:backend\" \"npm:dev:frontend\"",
     "build": "vite build",
     "preview": "vite preview",
     "pipeline:train": "npx --yes tsx medea-pipeline/scripts/train-hand-control-model.ts",

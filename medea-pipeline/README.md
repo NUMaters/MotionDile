@@ -10,7 +10,6 @@
 
 ## 構成
 
-- `frontend/collect.html`: frontend 入口（互換リダイレクト）
 - `collect.html`: 収集UI（日本語）。右手を映してサンプルを記録
 - `backend/cmd/server/main.go`: 学習データ保存 + 学習実行 API（Go）
 - `scripts/train-hand-control-model.ts`: 学習スクリプト（TypeScript、`npx tsx` で実行）

@@ -124,6 +124,7 @@ npm run build:model   # Wani_game.glb を生成
 npm run viewer        # http://localhost:3000/viewer でビューア起動
 npm run dev           # Go backend(8080) + Vite frontend(5173~) を同時起動
 npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + WebSocket, 8090）
+npm run dev:all       # game backend(8090) + medea backend(8080) + Vite frontend(5173~) を同時起動
 npm run pipeline:train:example  # サンプルデータから手モデル生成（public/models/hand-control-model.json）
 ```
 
@@ -174,9 +175,7 @@ WaniAR/
 │   │   └── build-wani-game-model.mjs  ← モデル生成パイプライン
 │   └── Meshy_AI_…_fbx/       ← 参考用 FBX + テクスチャ
 ├── medea-pipeline/            ← 右手操作学習パイプライン
-│   ├── frontend/
-│   │   └── collect.html       ← 学習UIの入口（互換）
-│   ├── collect.html           ← 学習データ収集UI（現行）
+│   ├── collect.html           ← 学習データ収集UI
 │   ├── backend/
 │   │   ├── go.mod
 │   │   └── cmd/server/main.go ← 学習データ保存 + 学習実行 API（Go）
