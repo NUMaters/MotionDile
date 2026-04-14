@@ -161,8 +161,19 @@ npm run pipeline:train:example  # サンプルデータから手モデル生成�
 WaniAR/
 ├── game/
 │   ├── frontend/
-│   │   ├── src/main.ts        ← ゲーム frontend エントリ（TypeScript）
-│   │   └── src/data/source/Лес.obj  ← ワールドマップ（OBJ）
+│   │   └── src/
+│   │       ├── main.ts          ← ゲームループ・起動オーケストレーター
+│   │       ├── types.ts         ← 共有型定義
+│   │       ├── config.ts        ← 定数・設定値
+│   │       ├── utils.ts         ← 汎用ユーティリティ関数
+│   │       ├── hud.ts           ← HUD テキスト管理
+│   │       ├── scene.ts         ← Three.js シーン・カメラ・ライト初期化
+│   │       ├── input.ts         ← キーボード・ジョイスティック入力
+│   │       ├── hand-tracking.ts ← MediaPipe 手認識・カメラ・首制御
+│   │       ├── world.ts         ← ワールドマップ読み込み・地形・衝突判定
+│   │       ├── character.ts     ← キャラクター読み込み・アニメーション・色替え
+│   │       ├── network.ts       ← WebSocket・REST・マルチプレイ同期
+│   │       └── data/source/Лес.obj  ← ワールドマップ（OBJ）
 │   └── backend/               ← ゲーム同期バックエンド（Go + Gin + WebSocket）
 │       ├── cmd/server/main.go
 │       ├── internal/...
