@@ -41,7 +41,7 @@ export const PLAYER_GROUND_CLEARANCE = 0.018;
 export const MATERIAL_002_SINK_OFFSET = 0.008;
 /** キャラの水平方向コリジョンのおおよその半径（障害物レイ用） */
 export const PLAYER_COLLISION_RADIUS = 0.045;
-/** true のとき高さはフラット床にスナップし、木の上などには乗らない */
+/** true のとき高さは `sampleFlatFloorY`（草地・岩の上面など）にスナップする */
 export const FLAT_WORLD_MODE = true;
 
 // ─── 移動境界（円形バリア） ─────────────────────────────────────────────────
@@ -77,14 +77,32 @@ export const CAM_DISTANCE = 0.09;
 export const CAM_LOOK_AHEAD = 1.30;
 /** 注視点の高さオフセット */
 export const CAM_LOOK_HEIGHT = 0.14;
+/** スマホのジャイロで視点を振るときの最大ヨー（ラジアン／片側） */
+export const DEVICE_LOOK_MAX_YAW_RAD = 1.15;
+/** スマホのジャイロで視点を振るときの最大ピッチ（ラジアン／片側） */
+export const DEVICE_LOOK_MAX_PITCH_RAD = 0.72;
+/** ジャイロ視点の追従（大きいほど素早く） */
+export const DEVICE_LOOK_SMOOTH = 11;
+/** 視点リセット中、正面へ戻すスムージング（通常より強め） */
+export const DEVICE_LOOK_RECENTER_SMOOTH = 17;
+/** 視点リセット時、センサーを無視してターゲット0へ寄せる時間（秒）。終了後に再キャリブレーション */
+export const DEVICE_LOOK_RECENTER_DURATION_S = 2;
+/**
+ * iOS 相対向きで alpha が null のとき、`beta`/`gamma` の差分から視点へ変換するゲイン（度→ラジアン換算後に乗算）
+ */
+export const DEVICE_LOOK_TILT_GAIN = 1.35;
 
 // ─── ネットワーク同期 ───────────────────────────────────────────────────────
 /** 位置送信の最小間隔（ミリ秒）。負荷と滑らかさのバランス */
 export const MOVE_SEND_INTERVAL = 66;
 
 // ─── 手認識（MediaPipe） ────────────────────────────────────────────────────
-/** 手ランドマーク検出の最大間隔（ミリ秒） */
-export const HAND_DETECT_INTERVAL = 33;
+/** 手ランドマーク検出の最大間隔（ミリ秒）。短いほど追従が速い */
+export const HAND_DETECT_INTERVAL = 22;
+/** 特徴量の指数移動平均係数（0〜1。大きいほど素早く追従、小さいほどジャッカ抑制） */
+export const HAND_FEATURE_EMA_ALPHA = 0.38;
+/** 首（手追従）の `smoothToward` 係数。大きいほど頭が手に追従しやすい */
+export const HEAD_HAND_TRACK_SMOOTH = 12;
 
 // ─── 移動・ジョイスティック（スマホ走行ヒステリシス含む） ─────────────────────
 /** ジョイスティックを「走り」に入るまでの押し出し比（rawDist/R）のしきい値（入り） */
@@ -172,6 +190,10 @@ export const JOYSTICK_RING_OUTER_PX = 166;
 export const JOYSTICK_RING_INSET_PX = 16;
 /** リングのボーダー太さ（px。内径 ≒ ベース径になるよう `RING_OUTER - 2*border ≈ BASE`） */
 export const JOYSTICK_RING_BORDER_PX = 16;
+/** 視点リセット（丸アイコン）の直径（px） */
+export const LOOK_RESET_SIZE_PX = 48;
+/** 左端の余白（px。セーフエリアとは max で併用。小さいほど画面端寄り） */
+export const LOOK_RESET_LEFT_INSET_PX = 6;
 
 // ─── アニメーションクリップ名（GLB 内のクリップと一致させる） ────────────────
 export const CLIP_NAMES = [
@@ -181,16 +203,17 @@ export const CLIP_NAMES = [
 ];
 
 // ─── 手モデル未読み込み時のデフォルト（口・首のゲイン） ───────────────────────
+/** v2: 口は指の開き比（~1.0 グー … ~1.85 パー）、首は掌の法線（左右・上下） */
 export const DEFAULT_HAND_CONTROL_MODEL: HandControlModel = {
-  version: 1,
-  mouth: { closedCurl: 0.35, openCurl: 0.8, openThreshold: 0.4 },
+  version: 2,
+  mouth: { closedCurl: 1.06, openCurl: 1.82, openThreshold: 0.42 },
   neck: {
     neutralTilt: 0,
-    yawGain: 1.0,
-    maxYaw: 0.7,
+    yawGain: 1.12,
+    maxYaw: 0.72,
     neutralPitchAngle: 0,
-    pitchGain: -2.0,
-    maxPitch: 0.5,
+    pitchGain: -1.45,
+    maxPitch: 0.55,
   },
 };
 

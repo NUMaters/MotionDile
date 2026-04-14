@@ -1,26 +1,26 @@
 {
   "version": 1,
-  "trainedAt": "2026-04-12T17:19:10.895Z",
+  "trainedAt": "2026-04-14T16:27:28.456Z",
   "stats": {
-    "totalSamples": 188,
-    "openSamples": 60,
-    "closedSamples": 41,
-    "yawSamples": 87,
-    "pitchSamples": 87,
-    "previousSamples": 4,
-    "mergedSamples": 192
+    "totalSamples": 82,
+    "openSamples": 17,
+    "closedSamples": 13,
+    "yawSamples": 52,
+    "pitchSamples": 52,
+    "previousSamples": 188,
+    "mergedSamples": 270
   },
   "mouth": {
-    "closedCurl": 0.7329673171896536,
-    "openCurl": 0.8639936823505191,
+    "closedCurl": 0.6990735533048478,
+    "openCurl": 0.8274253617641437,
     "openThreshold": 0.5
   },
   "neck": {
-    "neutralTilt": -0.25888695081310226,
-    "yawGain": 0.1863296857090233,
-    "maxYaw": 0.6965022927452663,
-    "neutralPitchAngle": 0.19893694097923753,
-    "pitchGain": -0.2937329836828568,
-    "maxPitch": 0.49650572466055154
+    "neutralTilt": 0.11145544772882901,
+    "yawGain": 0.08480384063807778,
+    "maxYaw": 0.6975645593930002,
+    "neutralPitchAngle": 0.3200221510593094,
+    "pitchGain": -0.3685032941468559,
+    "maxPitch": 0.49756694902290255
   }
 }

@@ -2,16 +2,23 @@ import * as THREE from 'three';
 import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import type { HandLm, HandControlModel, HandLandmarkerVideoResult } from './types';
 import {
-  HAND_MODEL_URL, HAND_DETECT_INTERVAL, DEFAULT_HAND_CONTROL_MODEL,
+  HAND_MODEL_URL,
+  HAND_DETECT_INTERVAL,
+  HAND_FEATURE_EMA_ALPHA,
+  HEAD_HAND_TRACK_SMOOTH,
+  DEFAULT_HAND_CONTROL_MODEL,
 } from './config';
 import { clamp, smoothToward, errorToText, getEl } from './utils';
 import { setHandModelStatus } from './hud';
+import { requestDeviceLookPermissionSync, startDeviceLook } from './device-look';
 
 let handLandmarker: HandLandmarker | null = null;
 let cameraActive = false;
 let lastCameraErrorMessage = '';
 let lastHandTime = 0;
 let handControlModel: HandControlModel = structuredClone(DEFAULT_HAND_CONTROL_MODEL);
+/** `loadHandControlModel` 確定後の HUD 左側（失敗→再試行→成功時に復元する） */
+let savedHandModelHudLine = '手モデル: デフォルト';
 
 export const handState = { mouthOpenness: 0, neckYaw: 0, neckPitch: 0, detected: false };
 export let smoothNeckYaw = 0;
@@ -20,13 +27,35 @@ export let smoothNeckPitch = 0;
 const camVideo = getEl<HTMLVideoElement>('cam-video');
 const camPreview = getEl<HTMLElement>('cam-preview');
 const camOverlay = getEl<HTMLCanvasElement>('cam-overlay');
-const tapStartEl = getEl<HTMLElement>('tap-start');
 
 const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const qNeck = new THREE.Quaternion();
 
+type HandFeatures = {
+  avgCurl: number;
+  tiltAngle: number;
+  pitchAngle: number;
+  fingerExtension: number;
+};
+
+let emaCurl = 0.5;
+let emaTilt = 0;
+let emaPitch = 0;
+let emaExt = 1.35;
+let hadHandPrevFrame = false;
+
+const HAND_MODEL_FLOAT32 =
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float32/latest/hand_landmarker.task';
+
 async function openCameraStreamPreferRear(): Promise<MediaStream> {
   const tries = [
+    {
+      video: {
+        facingMode: { exact: 'environment' as const },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+    },
     { video: { facingMode: { exact: 'environment' as const }, width: { ideal: 640 }, height: { ideal: 480 } } },
     { video: { facingMode: { ideal: 'environment' as const }, width: { ideal: 640 }, height: { ideal: 480 } } },
     { video: { facingMode: { ideal: 'user' as const }, width: { ideal: 640 }, height: { ideal: 480 } } },
@@ -63,12 +92,14 @@ async function initHandLandmarkerWithFallback(): Promise<HandLandmarker> {
       try {
         const lm = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
+            modelAssetPath: HAND_MODEL_FLOAT32,
             delegate,
           },
           numHands: 1,
           runningMode: 'VIDEO',
+          minHandDetectionConfidence: 0.55,
+          minHandPresenceConfidence: 0.5,
+          minTrackingConfidence: 0.65,
         });
         console.log(`HandLandmarker initialized: wasm=${wasmRoot}, delegate=${delegate}`);
         return lm;
@@ -129,11 +160,31 @@ function landmarksForHandControl(lm: HandLm[]): HandLm[] {
   return lm.map((p) => ({ x: 1 - p.x, y: 1 - p.y, z: p.z }));
 }
 
-function extractHandFeatures(lm: HandLm[]) {
+function vSub(a: HandLm, b: HandLm): { x: number; y: number; z: number } {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+function vLen(v: { x: number; y: number; z: number }): number {
+  return Math.hypot(v.x, v.y, v.z);
+}
+
+function vCross(
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+): { x: number; y: number; z: number } {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+/** v1 学習済み JSON 互換: 手首〜中指 MCP の傾き + 指先〜MCP 距離のカール */
+function extractLegacyHandFeatures(lm: HandLm[]): HandFeatures {
   const wrist = lm[0];
   const midMCP = lm[9];
   const handSize = Math.hypot(wrist.x - midMCP.x, wrist.y - midMCP.y, wrist.z - midMCP.z);
-  const fingerPairs = [[8, 5], [12, 9], [16, 13], [20, 17]];
+  const fingerPairs: [number, number][] = [[8, 5], [12, 9], [16, 13], [20, 17]];
   let curlSum = 0;
   for (const [tip, mcp] of fingerPairs) {
     curlSum += Math.hypot(lm[tip].x - lm[mcp].x, lm[tip].y - lm[mcp].y, lm[tip].z - lm[mcp].z);
@@ -146,7 +197,95 @@ function extractHandFeatures(lm: HandLm[]) {
   const tiltAngle = Math.atan2(handDx, -handDy);
   const pitchAngle = Math.atan2(handDz, Math.hypot(handDx, handDy));
 
-  return { avgCurl, tiltAngle, pitchAngle };
+  const tips = [8, 12, 16, 20] as const;
+  const mcps = [5, 9, 13, 17] as const;
+  let extAcc = 0;
+  for (let i = 0; i < 4; i++) {
+    const dTip = vLen(vSub(lm[tips[i]], wrist));
+    const dMcp = vLen(vSub(lm[mcps[i]], wrist));
+    extAcc += dTip / Math.max(dMcp, 0.02);
+  }
+  const fingerExtension = extAcc / 4;
+
+  return { avgCurl, tiltAngle, pitchAngle, fingerExtension };
+}
+
+/**
+ * v2: 掌の法線（中指先方向 × 人差し指〜小指 MCP）で首の左右・前後を安定して取る。
+ * 口は指の開き比（手首〜各指先 / 手首〜各 MCP）でパー／グーを判別。
+ */
+function extractPalmHandFeatures(lm: HandLm[]): HandFeatures {
+  const wrist = lm[0];
+  const toMidTip = vSub(lm[12], wrist);
+  const across = vSub(lm[17], lm[5]);
+  let n = vCross(toMidTip, across);
+  const nl = vLen(n);
+  if (nl < 1e-7) return extractLegacyHandFeatures(lm);
+
+  n = { x: n.x / nl, y: n.y / nl, z: n.z / nl };
+  if (n.z < 0) {
+    n = { x: -n.x, y: -n.y, z: -n.z };
+  }
+
+  const tiltAngle = Math.atan2(n.x, -n.y);
+  const pitchAngle = Math.asin(clamp(n.z, -1, 1));
+
+  const tips = [8, 12, 16, 20] as const;
+  const mcps = [5, 9, 13, 17] as const;
+  let extAcc = 0;
+  for (let i = 0; i < 4; i++) {
+    const dTip = vLen(vSub(lm[tips[i]], wrist));
+    const dMcp = vLen(vSub(lm[mcps[i]], wrist));
+    extAcc += dTip / Math.max(dMcp, 0.02);
+  }
+  const fingerExtension = extAcc / 4;
+
+  const fingerPairs: [number, number][] = [[8, 5], [12, 9], [16, 13], [20, 17]];
+  let curlSum = 0;
+  const midMCP = lm[9];
+  const handSize = Math.hypot(wrist.x - midMCP.x, wrist.y - midMCP.y, wrist.z - midMCP.z);
+  for (const [tip, mcp] of fingerPairs) {
+    curlSum += Math.hypot(lm[tip].x - lm[mcp].x, lm[tip].y - lm[mcp].y, lm[tip].z - lm[mcp].z);
+  }
+  const avgCurl = handSize > 0.01 ? (curlSum / 4) / handSize : 0;
+
+  return { avgCurl, tiltAngle, pitchAngle, fingerExtension };
+}
+
+function extractHandFeaturesForModel(lm: HandLm[], version: number): HandFeatures {
+  return version >= 2 ? extractPalmHandFeatures(lm) : extractLegacyHandFeatures(lm);
+}
+
+function applyFeatureEma(f: HandFeatures): HandFeatures {
+  const a = HAND_FEATURE_EMA_ALPHA;
+  if (!hadHandPrevFrame) {
+    emaCurl = f.avgCurl;
+    emaTilt = f.tiltAngle;
+    emaPitch = f.pitchAngle;
+    emaExt = f.fingerExtension;
+    hadHandPrevFrame = true;
+    return { ...f };
+  }
+  emaCurl += (f.avgCurl - emaCurl) * a;
+  emaTilt += (f.tiltAngle - emaTilt) * a;
+  emaPitch += (f.pitchAngle - emaPitch) * a;
+  emaExt += (f.fingerExtension - emaExt) * a;
+  return {
+    avgCurl: emaCurl,
+    tiltAngle: emaTilt,
+    pitchAngle: emaPitch,
+    fingerExtension: emaExt,
+  };
+}
+
+function mouthOpennessFromFeatures(f: HandFeatures, m: HandControlModel): number {
+  if (m.version < 2) {
+    const mouthRange = Math.max(0.05, m.mouth.openCurl - m.mouth.closedCurl);
+    return clamp((f.avgCurl - m.mouth.closedCurl) / mouthRange, 0, 1);
+  }
+  const lo = m.mouth.closedCurl;
+  const hi = m.mouth.openCurl;
+  return clamp((f.fingerExtension - lo) / Math.max(0.06, hi - lo), 0, 1);
 }
 
 function mergeHandModel(raw: unknown): HandControlModel {
@@ -179,47 +318,51 @@ export async function loadHandControlModel(): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const modelJson: unknown = await res.json();
     handControlModel = mergeHandModel(modelJson);
-    setHandModelStatus('手モデル: 学習済み');
+    savedHandModelHudLine = '手モデル: 学習済み';
+    setHandModelStatus(savedHandModelHudLine);
     console.log('Loaded hand control model:', handControlModel);
   } catch (e: unknown) {
     handControlModel = structuredClone(DEFAULT_HAND_CONTROL_MODEL);
-    setHandModelStatus('手モデル: デフォルト');
+    savedHandModelHudLine = '手モデル: デフォルト';
+    setHandModelStatus(savedHandModelHudLine);
     const msg = e instanceof Error ? e.message : String(e);
     console.warn('Hand control model not found. Using default parameters.', msg);
   }
 }
 
+/**
+ * 全画面オーバーレイは出さず、**画面の初回タップ**（`window` capture）で
+ * モーション許可（同期）→ 視点リスナー → カメラ起動をまとめて行う（iOS のユーザージェスチャ要件用）。
+ */
+const firstTapOpts: AddEventListenerOptions = { capture: true, passive: true };
+
+/**
+ * ジョイスティック等がキャンバスより上でも拾えるよう、初回だけ `window` の capture で処理する。
+ * `preventDefault` はしない（移動の初タップと兼用できるようにする）。
+ */
 export function showTapToStart(): void {
-  const guideEl = tapStartEl.querySelector('span');
-  const isLikelyInsecure = !window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
-  if (guideEl && isLikelyInsecure) {
-    guideEl.textContent = 'iPhoneはHTTPS接続が必要です（httpではカメラ不可）';
-  }
-  tapStartEl.classList.add('show');
-
-  async function onStartGesture(e: Event) {
-    e.preventDefault();
-    tapStartEl.removeEventListener('touchstart', onStartGesture);
-    tapStartEl.removeEventListener('click', onStartGesture);
-    tapStartEl.classList.remove('show');
-    tapStartEl.style.display = 'none';
-
-    const ok = await startCamera();
-    if (ok) return;
-
-    if (guideEl) {
-      guideEl.textContent = isLikelyInsecure
-        ? 'iPhoneはHTTPS接続が必要です（https://<PC-IP>:5173 で開いてください）'
-        : (lastCameraErrorMessage || 'カメラが起動できません。再タップで再試行します。');
-    }
-    tapStartEl.style.display = 'flex';
-    tapStartEl.classList.add('show');
-    tapStartEl.addEventListener('touchstart', onStartGesture, { passive: false });
-    tapStartEl.addEventListener('click', onStartGesture);
+  function bindStartListener(): void {
+    window.addEventListener('pointerdown', onFirstPointerDown, firstTapOpts);
   }
 
-  tapStartEl.addEventListener('touchstart', onStartGesture, { passive: false });
-  tapStartEl.addEventListener('click', onStartGesture);
+  function onFirstPointerDown(): void {
+    window.removeEventListener('pointerdown', onFirstPointerDown, firstTapOpts);
+
+    requestDeviceLookPermissionSync();
+    startDeviceLook();
+
+    void startCamera().then((ok) => {
+      if (ok) {
+        setHandModelStatus(savedHandModelHudLine);
+        return;
+      }
+      const hint = lastCameraErrorMessage || 'カメラを開始できません';
+      setHandModelStatus(`${savedHandModelHudLine} — ${hint}（画面をタップして再試行）`);
+      bindStartListener();
+    });
+  }
+
+  bindStartListener();
 }
 
 function processHandResults(results: HandLandmarkerVideoResult) {
@@ -229,6 +372,7 @@ function processHandResults(results: HandLandmarkerVideoResult) {
 
   if (!results.landmarks || results.landmarks.length === 0) {
     handState.detected = false;
+    hadHandPrevFrame = false;
     return;
   }
   handState.detected = true;
@@ -250,14 +394,17 @@ function processHandResults(results: HandLandmarkerVideoResult) {
     ctx.stroke();
   }
 
-  const f = extractHandFeatures(landmarksForHandControl(lm));
+  const raw = extractHandFeaturesForModel(landmarksForHandControl(lm), handControlModel.version);
+  const f = applyFeatureEma(raw);
   const m = handControlModel;
-  const mouthRange = Math.max(0.05, m.mouth.openCurl - m.mouth.closedCurl);
-  handState.mouthOpenness = clamp((f.avgCurl - m.mouth.closedCurl) / mouthRange, 0, 1);
+  handState.mouthOpenness = mouthOpennessFromFeatures(f, m);
+
   const yaw = clamp((f.tiltAngle - m.neck.neutralTilt) * m.neck.yawGain, -m.neck.maxYaw, m.neck.maxYaw);
   const pitch = clamp((f.pitchAngle - m.neck.neutralPitchAngle) * m.neck.pitchGain, -m.neck.maxPitch, m.neck.maxPitch);
-  handState.neckYaw = Math.abs(yaw) < 0.035 ? 0 : yaw;
-  handState.neckPitch = Math.abs(pitch) < 0.03 ? 0 : pitch;
+  const yawDead = m.version >= 2 ? 0.022 : 0.035;
+  const pitchDead = m.version >= 2 ? 0.018 : 0.03;
+  handState.neckYaw = Math.abs(yaw) < yawDead ? 0 : yaw;
+  handState.neckPitch = Math.abs(pitch) < pitchDead ? 0 : pitch;
 }
 
 export function updateHandTracking(now: number): void {
@@ -280,9 +427,8 @@ export function applyHeadTracking(
   const hasTracking = handState.detected && cameraActive;
   const targetYaw = hasTracking ? handState.neckYaw : 0;
   const targetPitch = (hasTracking ? handState.neckPitch : 0) + additiveNeckPitch;
-  const speed = 9;
-  smoothNeckYaw = smoothToward(smoothNeckYaw, targetYaw, dt, speed);
-  smoothNeckPitch = smoothToward(smoothNeckPitch, targetPitch, dt, speed);
+  smoothNeckYaw = smoothToward(smoothNeckYaw, targetYaw, dt, HEAD_HAND_TRACK_SMOOTH);
+  smoothNeckPitch = smoothToward(smoothNeckPitch, targetPitch, dt, HEAD_HAND_TRACK_SMOOTH);
   euler.set(smoothNeckPitch, smoothNeckYaw, 0, 'YXZ');
   qNeck.setFromEuler(euler);
   headBone.quaternion.copy(headBaseQuat).multiply(qNeck);

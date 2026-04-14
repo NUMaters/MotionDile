@@ -149,11 +149,13 @@ function refreshWorldColliders(root: THREE.Group) {
     const names = mats.map((m) => m?.name || '').join(' ').toLowerCase();
     const isMaterial002 = names.includes('материал.002');
     const isStone = names.includes('stone');
-    const walkable = isMaterial002 || /(grass|ground|plane|terrain|floor|land)/.test(names);
+    /** 草地・地面クラスに加え、岩の上面も足場レイに含める（登攀用） */
+    const walkable =
+      isMaterial002 || isStone || /(grass|ground|plane|terrain|floor|land)/.test(names);
     mesh.userData.isMaterial002 = isMaterial002;
     mesh.userData.isStone = isStone;
     if (walkable) worldWalkables.push(mesh);
-    else worldObstacles.push(mesh);
+    if (!walkable || isStone) worldObstacles.push(mesh);
   });
 }
 
@@ -178,6 +180,10 @@ export function sampleTerrainHeight(x: number, z: number, yHint: number): number
   return null;
 }
 
+/**
+ * 上からレイを飛ばし、**最初に見つかった**足場の高さ（草地・岩の上面など）を返す。
+ * 以前は最も低い面を採っていたため、岩の下の地面が選ばれて乗れなかった。
+ */
 export function sampleFlatFloorY(x: number, z: number): number | null {
   if (!worldWalkables.length) return null;
   vTmpA.set(x, 18, z);
@@ -185,13 +191,12 @@ export function sampleFlatFloorY(x: number, z: number): number | null {
   terrainRay.near = 0;
   terrainRay.far = 40;
   const hits = terrainRay.intersectObjects(worldWalkables, false);
-  let floorY: number | null = null;
   for (const hit of hits) {
     const n = getHitWorldNormal(hit);
     if (!n || n.y < TERRAIN_MIN_NORMAL_Y) continue;
-    if (floorY == null || hit.point.y < floorY) floorY = hit.point.y;
+    return hit.point.y;
   }
-  return floorY;
+  return null;
 }
 
 export function sampleMaterial002SinkOffset(x: number, z: number): number {
@@ -227,6 +232,7 @@ export function canMoveOnWorld(
   const offsets = [0, PLAYER_COLLISION_RADIUS * 0.55, -PLAYER_COLLISION_RADIUS * 0.55];
   const heights = [0.04, playerFootOffset * 0.7];
 
+  let blocked = false;
   for (const h of heights) {
     for (const off of offsets) {
       vTmpB.set(curPos.x + sideX * off, curPos.y + h, curPos.z + sideZ * off);
@@ -239,17 +245,38 @@ export function canMoveOnWorld(
         const mesh = hit.object as THREE.Mesh;
         const aroundBody = hit.point.y > (curPos.y - 0.08) && hit.point.y < (curPos.y + playerFootOffset * 1.9);
         if (mesh.userData.isStone) {
-          if (aroundBody && hit.distance <= dist + PLAYER_COLLISION_RADIUS * 0.3) return false;
+          const n = getHitWorldNormal(hit);
+          /** 岩の上面（足場）は横移動の壁として扱わない */
+          if (n && n.y >= TERRAIN_MIN_NORMAL_Y) continue;
+          if (aroundBody && hit.distance <= dist + PLAYER_COLLISION_RADIUS * 0.3) {
+            blocked = true;
+            break;
+          }
           continue;
         }
         const n = getHitWorldNormal(hit);
         if (!n) continue;
         const isWallLike = Math.abs(n.y) < 0.6;
-        if (isWallLike && aroundBody) return false;
+        if (isWallLike && aroundBody) {
+          blocked = true;
+          break;
+        }
       }
+      if (blocked) break;
     }
+    if (blocked) break;
   }
-  return true;
+
+  if (!blocked) return true;
+
+  /** 横レイで側面に当たっても、移動先の足場が `MAX_STEP_UP` 以内なら段を登る */
+  const yHere = sampleFlatFloorY(curPos.x, curPos.z);
+  const yThere = sampleFlatFloorY(nextX, nextZ);
+  if (yHere != null && yThere != null) {
+    const rise = yThere - yHere;
+    if (rise >= 0.012 && rise <= MAX_STEP_UP) return true;
+  }
+  return false;
 }
 
 function normalizeWorldMap(object: THREE.Group) {

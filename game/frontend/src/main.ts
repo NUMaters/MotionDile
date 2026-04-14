@@ -16,6 +16,8 @@ import {
   JUMP_ROOT_PITCH_PEAK, JUMP_ROOT_PITCH_LAND, JUMP_ROOT_PITCH_SMOOTH,
   JUMP_HEAD_LEAD_LOCAL_Y, JUMP_HEAD_LEAD_RISE_S, JUMP_HEAD_LEAD_END_S, JUMP_BODY_LIFT_RAMP_S,
   JUMP_ROOT_PITCH_LAUNCH, JUMP_ROOT_ROLL_MAX, JUMP_AIR_MOVE_DECEL_MULT,
+  LOOK_RESET_SIZE_PX,
+  LOOK_RESET_LEFT_INSET_PX,
 } from './config';
 import { getEl, clamp, smoothToward } from './utils';
 import { refreshHud } from './hud';
@@ -26,6 +28,7 @@ import {
   updateHandTracking, applyHeadTracking,
   loadHandControlModel, showTapToStart,
 } from './hand-tracking';
+import { updateDeviceLook, getDeviceLookYawPitch, recenterDeviceLook } from './device-look';
 import {
   sampleTerrainHeight, sampleFlatFloorY, sampleMaterial002SinkOffset,
   canMoveOnWorld, loadWorldMap, getFlatWorldY, setFlatWorldY, hasWorldColliders,
@@ -84,6 +87,22 @@ let smoothHeadLeadY = 0;
 // ─── Init input ───
 initInput();
 refreshHud();
+
+const lookResetBtn = getEl<HTMLButtonElement>('look-reset-btn');
+function positionLookResetButton(): void {
+  lookResetBtn.style.width = `${LOOK_RESET_SIZE_PX}px`;
+  lookResetBtn.style.height = `${LOOK_RESET_SIZE_PX}px`;
+  lookResetBtn.style.left = `max(${LOOK_RESET_LEFT_INSET_PX}px, env(safe-area-inset-left, 0px))`;
+  lookResetBtn.style.top = '50%';
+  lookResetBtn.style.transform = 'translateY(-50%)';
+  lookResetBtn.style.bottom = 'auto';
+}
+positionLookResetButton();
+window.addEventListener('resize', positionLookResetButton);
+lookResetBtn.addEventListener('pointerdown', (e) => {
+  e.stopPropagation();
+  recenterDeviceLook();
+});
 
 // ─── Terrain helpers ───
 function alignModelToFlatWorld(forceSnap = false) {
@@ -297,6 +316,13 @@ function updateCharacter(dt: number) {
 }
 
 // ─── Camera ───
+const vCamOff = new THREE.Vector3();
+const vLookOff = new THREE.Vector3();
+const vWorldUp = new THREE.Vector3(0, 1, 0);
+const qDevYaw = new THREE.Quaternion();
+const qDevPitch = new THREE.Quaternion();
+const vRight = new THREE.Vector3();
+
 function updateCamera() {
   if (!model) return;
 
@@ -304,19 +330,42 @@ function updateCamera() {
   const fwdX = Math.sin(yaw);
   const fwdZ = Math.cos(yaw);
   const camAnchorY = model.position.y - idleBobOffset;
+  const { yaw: dYaw, pitch: dPitch } = getDeviceLookYawPitch();
 
-  const targetPos = new THREE.Vector3(
-    model.position.x - fwdX * CAM_DISTANCE,
-    camAnchorY + CAM_HEIGHT,
-    model.position.z - fwdZ * CAM_DISTANCE,
+  vCamOff.set(
+    -fwdX * CAM_DISTANCE,
+    camAnchorY + CAM_HEIGHT - model.position.y,
+    -fwdZ * CAM_DISTANCE,
   );
-  const targetLook = new THREE.Vector3(
-    model.position.x + fwdX * CAM_LOOK_AHEAD,
-    camAnchorY + CAM_LOOK_HEIGHT,
-    model.position.z + fwdZ * CAM_LOOK_AHEAD,
+  vLookOff.set(
+    fwdX * CAM_LOOK_AHEAD,
+    camAnchorY + CAM_LOOK_HEIGHT - model.position.y,
+    fwdZ * CAM_LOOK_AHEAD,
   );
-  camera.position.copy(targetPos);
-  camera.lookAt(targetLook);
+
+  if (dYaw !== 0 || dPitch !== 0) {
+    qDevYaw.setFromAxisAngle(vWorldUp, dYaw);
+    vCamOff.applyQuaternion(qDevYaw);
+    vLookOff.applyQuaternion(qDevYaw);
+    vRight.set(-fwdZ, 0, fwdX);
+    if (vRight.lengthSq() > 1e-10) {
+      vRight.normalize();
+      qDevPitch.setFromAxisAngle(vRight, dPitch);
+      vCamOff.applyQuaternion(qDevPitch);
+      vLookOff.applyQuaternion(qDevPitch);
+    }
+  }
+
+  camera.position.set(
+    model.position.x + vCamOff.x,
+    model.position.y + vCamOff.y,
+    model.position.z + vCamOff.z,
+  );
+  camera.lookAt(
+    model.position.x + vLookOff.x,
+    model.position.y + vLookOff.y,
+    model.position.z + vLookOff.z,
+  );
 
   sun.position.set(model.position.x + 8, 12, model.position.z + 6);
   sun.target.position.set(model.position.x, camAnchorY, model.position.z);
@@ -520,6 +569,7 @@ function loop(timestamp: number) {
   const now = timestamp || performance.now();
   updateHandTracking(now);
   updateCharacter(dt);
+  updateDeviceLook(dt);
 
   if (model) {
     const payload: MovePayload = {

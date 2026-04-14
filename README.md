@@ -29,18 +29,18 @@
 | `J` / `L` | 首を左右に向ける（制限付き） |
 | `I` / `K` | 首を上下に向ける（制限付き） |
 | `R` | 位置リセット |
-| マウスドラッグ | カメラ回転 |
+| スマホ: 端末を傾ける | 三人称視点をその方向へ（ジャイロ。`DEVICE_LOOK_*`） |
 | スクロール | ズーム |
 
-スマホのゲーム画面（`npm run dev` のトップ）では、左ジョイスティックで**指を内側の円より外へ押し出す**（外側の暗いリング方向）と走行。`rawDist / R` が **1.06 超で入り・1.01 以下で戻り**のヒステリシス。専用の「走る」ボタンはありません。**画面のどこでも短く素早く2回タップ**（ドラグしない）でジャンプ（フラット地形モード時）。PC では `Space` でジャンプできます。PC では引き続き `Shift` で走行できます。ワールド地面は碁盤風（木目調プレーン + `GridHelper`、`divisions=42` で目を細かく）です。
+スマホのゲーム画面（`npm run dev` のトップ）では、左端寄り・**画面の縦方向ほぼ中央**の丸い**目**アイコンで、視点を滑らかに正面へ戻したうえで端末の傾き基準を取り直せます（`DEVICE_LOOK_RECENTER_*` / `LOOK_RESET_*`、`device-look.ts`）。左ジョイスティックで**指を内側の円より外へ押し出す**（外側の暗いリング方向）と走行。`rawDist / R` が **1.06 超で入り・1.01 以下で戻り**のヒステリシス。専用の「走る」ボタンはありません。**画面のどこでも短く素早く2回タップ**（ドラグしない）でジャンプ（フラット地形モード時）。PC では `Space` でジャンプできます。PC では引き続き `Shift` で走行できます。ワールド地面は碁盤風（木目調プレーン + `GridHelper`、`divisions=42` で目を細かく）です。
 
-### ハンドトラッキング（常時起動）
+### ハンドトラッキング（初回タップで起動）
 
-モデル読み込み後に「タップして開始」を表示し、そのタップでブラウザのカメラ使用許可を求めます（iPhone Safari の仕様でユーザージェスチャー必須）。
+モデル読み込み後、**画面のどこかの初回タップ**（ジョイスティック操作を含む）で、iOS 向けに **DeviceMotion / DeviceOrientation** の `requestPermission`（`device-look.ts` の同期ラッパー）とカメラ・手認識の開始をまとめて行います（ユーザージェスチャー必須。カメラ許可とは別のシステムダイアログが出る場合があります）。起動に失敗したときは HUD に案内が出るので、**もう一度画面をタップ**して再試行できます。視点は `device-look.ts`（`alpha` なし時は `beta`/`gamma` と `DEVICE_LOOK_TILT_GAIN`）。
 
-- **口の開閉**: 手を開く（パー）→ 口が開く / 手を閉じる（グー）→ 口が閉じる（各指先のMCP関節からの伸び具合で判定）
-- **首の向き**: 手を左右に傾けると首が傾いた方向へ曲がる（手首→中指MCP のベクトル傾き＝yaw）。手を前後に倒すと首が上下する（z 軸成分＝pitch）
-- 画面右上にカメラプレビュー＋ランドマーク可視化を常時表示（**CSS の左右反転は行わず**、映像とランドマークが一致するよう素のストリーム向きで表示）
+- **口の開閉**: 手の**開き具合**を口の開きに対応（`hand-control-model.json` の **`version`** により計算式が異なる。**v2（推奨・デフォルト）**: 各指の「手首〜指先 / 手首〜MCP」の平均比でパー／グーを判別。**v1（学習済みの従来 JSON）**: 指先〜MCP 距離のカール指標を維持）
+- **首の向き（左右・上下）**: **v2** では**掌の法線**（中指先方向と手の横幅から）でヨー・ピッチを安定取得。**v1** では手首〜中指 MCP の傾き。いずれも特徴量に **EMA**（`HAND_FEATURE_EMA_ALPHA`）をかけ、首ボーンは `HEAD_HAND_TRACK_SMOOTH` で追従
+- カメラ起動後、画面右上にカメラプレビュー＋ランドマーク可視化（**CSS の左右反転は行わず**、映像とランドマークが一致するよう素のストリーム向きで表示）
 - 首・口の制御だけ、正規化ランドマークを **`(x,y) → (1-x, 1-y)`** に写してから特徴量を計算（非ミラー映像でもジェスチャーとワニの向きが対応しやすくなる。`medea-pipeline/collect.html` も同じ処理で学習データと整合）
 - スマートフォンは **外カメラ優先** で起動（失敗時は内カメラへフォールバック）
 - 手が検出されていない間は **PC の `M` キー**で口の開閉を切り替え可能（スマホは手認識またはカメラ未起動時は口は閉じたまま）
@@ -60,7 +60,7 @@
 - **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含め、他クライアントでも呼吸表現を再現
 - **Vite v6.2** — 開発サーバー・ビルドツール（`.ts` をそのままトランスパイル）
 - **serve** — 静的 HTTP サーバー（ビューア配信）
-- **`game/frontend/src/config.ts`** — ゲーム定数の集約。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / つまみは `JOYSTICK_THUMB_RADIUS_PX`（一辺 `JOYSTICK_THUMB_SIZE_PX` は半径の2倍で算出） / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig` が反映）
+- **`game/frontend/src/config.ts`** — ゲーム定数の集約。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_FEATURE_EMA_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker **float32** と検出・追跡しきい値の調整）
 
 ### 3D モデルパイプライン
 
@@ -172,6 +172,7 @@ WaniAR/
 │   │       ├── scene.ts         ← Three.js シーン・カメラ・ライト初期化
 │   │       ├── input.ts         ← キーボード・ジョイスティック・画面ダブルタップ（ジャンプ）
 │   │       ├── hand-tracking.ts ← MediaPipe 手認識・カメラ・首制御
+│   │       ├── device-look.ts   ← スマホジャイロで三人称カメラ視点
 │   │       ├── world.ts         ← ワールドマップ読み込み・地形・衝突判定
 │   │       ├── character.ts     ← キャラクター読み込み・アニメーション・色替え
 │   │       ├── network.ts       ← WebSocket・REST・マルチプレイ同期
