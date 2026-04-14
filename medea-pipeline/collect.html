@@ -2,31 +2,173 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>medea-pipeline 収集</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d1117" />
+  <title>medea-pipeline 学習データ収集</title>
   <style>
-    body { margin: 0; font-family: sans-serif; background: #111; color: #eee; }
-    main { display: grid; grid-template-columns: 380px 1fr; min-height: 100vh; }
-    .panel { padding: 16px; border-right: 1px solid #333; overflow: auto; }
-    .row { margin: 10px 0; }
-    button { padding: 8px 10px; margin: 4px 4px 0 0; }
-    input[type="range"] { width: 100%; }
-    #stage { position: relative; display: flex; align-items: center; justify-content: center; }
-    #video, #overlay { width: min(960px, 100%); max-height: 95vh; border-radius: 8px; }
-    #overlay { position: absolute; pointer-events: none; }
-    textarea { width: 100%; min-height: 180px; background: #000; color: #0f0; }
-    .small { font-size: 12px; color: #aaa; }
-    .ok { color: #7cff8e; }
-    .warn { color: #ffce70; }
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --bad: #f85149;
+      --mouth-open: #238636;
+      --mouth-closed: #6e7681;
+      --tilt: #a371f7;
+      --radius: 12px;
+      --tap: 48px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    main {
+      display: grid;
+      grid-template-columns: min(420px, 100%) 1fr;
+      min-height: 100vh;
+    }
+    .panel {
+      padding: 16px;
+      border-right: 1px solid var(--border);
+      overflow: auto;
+      background: var(--panel);
+    }
+    h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin: 0 0 4px;
+      letter-spacing: 0.02em;
+    }
+    .subtitle { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
 
-    .stick-wrap { display: grid; grid-template-columns: 140px 1fr; gap: 10px; align-items: center; }
+    .det-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+    }
+    .det-badge.ok { background: rgba(63, 185, 80, 0.12); border-color: rgba(63, 185, 80, 0.35); color: #7ee787; }
+    .det-badge.wait { background: rgba(210, 153, 34, 0.12); border-color: rgba(210, 153, 34, 0.4); color: #e3b341; }
+    .det-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease infinite; }
+    .det-badge.ok .det-dot { animation: none; background: var(--ok); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+    section.card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    section.card h2 {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 0 0 10px;
+      font-weight: 600;
+    }
+
+    .row { margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .row.tight { margin: 4px 0; }
+
+    button, .file-btn {
+      min-height: var(--tap);
+      padding: 0 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #21262d;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button:hover, .file-btn:hover { background: #30363d; border-color: #8b949e; }
+    button:active { transform: scale(0.98); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.primary { background: var(--accent); border-color: #388bfd; color: #fff; }
+    button.primary:hover { background: #4393e6; }
+    button.big-mouth {
+      flex: 1;
+      min-width: 140px;
+      min-height: 56px;
+      font-size: 15px;
+      border-width: 2px;
+    }
+    button.mouth-open { border-color: rgba(63, 185, 80, 0.6); background: rgba(35, 134, 54, 0.2); color: #7ee787; }
+    button.mouth-open:hover { background: rgba(35, 134, 54, 0.35); }
+    button.mouth-closed { border-color: rgba(139, 148, 158, 0.5); color: #c9d1d9; }
+    button.tilt-cap { border-color: rgba(163, 113, 247, 0.55); background: rgba(163, 113, 247, 0.12); color: #d2a8ff; width: 100%; min-height: 52px; }
+
+    .kbd {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: #21262d;
+      border: 1px solid var(--border);
+      font-size: 11px;
+      font-family: ui-monospace, monospace;
+      color: var(--muted);
+    }
+
+    .hints { font-size: 11px; color: var(--muted); line-height: 1.6; }
+    .hints li { margin: 4px 0; }
+
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .small { font-size: 12px; color: var(--muted); }
+
+    #stage {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #010409;
+      min-height: 200px;
+    }
+    #video, #overlay {
+      width: min(960px, 100%);
+      max-height: min(96vh, 900px);
+      border-radius: var(--radius);
+    }
+    #overlay { position: absolute; pointer-events: none; }
+
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      background: #010409;
+      color: #7ee787;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11px;
+      font-family: ui-monospace, monospace;
+      resize: vertical;
+    }
+
+    .stick-wrap { display: grid; grid-template-columns: 132px 1fr; gap: 12px; align-items: start; }
     #label-stick {
       position: relative;
       width: 120px;
       height: 120px;
       border-radius: 50%;
-      border: 2px solid #4b5;
-      background: rgba(60, 120, 80, 0.12);
+      border: 2px solid #3d444d;
+      background: radial-gradient(circle at 35% 30%, rgba(88, 166, 255, 0.08), transparent 55%);
       touch-action: none;
       user-select: none;
     }
@@ -34,32 +176,63 @@
       position: absolute;
       left: 50%;
       top: 50%;
-      width: 36px;
-      height: 36px;
-      margin-left: -18px;
-      margin-top: -18px;
+      width: 38px;
+      height: 38px;
+      margin-left: -19px;
+      margin-top: -19px;
       border-radius: 50%;
-      background: rgba(120, 255, 160, 0.65);
-      border: 1px solid rgba(255, 255, 255, 0.6);
+      background: rgba(163, 113, 247, 0.75);
+      border: 2px solid rgba(255, 255, 255, 0.5);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
       transform: translate(0px, 0px);
       pointer-events: none;
     }
+
+    .counts {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      font-size: 12px;
+    }
+    .counts span { color: var(--accent); font-weight: 700; }
+
+    #toast {
+      position: fixed;
+      bottom: max(20px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%) translateY(120px);
+      padding: 12px 20px;
+      background: #30363d;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+      z-index: 100;
+      opacity: 0;
+      transition: transform 0.35s ease, opacity 0.35s ease;
+      pointer-events: none;
+      max-width: 92vw;
+      text-align: center;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .ok { color: #7ee787; }
+    .warn { color: #e3b341; }
+
     @media (max-width: 900px) {
-      main { display: block; }
+      main { grid-template-columns: 1fr; }
       .panel {
         border-right: none;
-        border-bottom: 1px solid #333;
-        max-height: 58vh;
+        border-bottom: 1px solid var(--border);
+        max-height: none;
       }
-      #stage {
-        min-height: 42vh;
-        padding: 8px;
-      }
-      #video, #overlay {
-        width: 100%;
-        max-height: 40vh;
-      }
-      textarea { min-height: 120px; }
+      #stage { min-height: 38vh; padding: 8px; }
+      #video, #overlay { max-height: 42vh; }
+      textarea { min-height: 100px; }
       .stick-wrap { grid-template-columns: 120px 1fr; }
     }
   </style>
@@ -67,59 +240,94 @@
 <body>
   <main>
     <section class="panel">
-      <h2>medea-pipeline 学習データ収集</h2>
-      <div class="row">
-        <button id="start">カメラ開始</button>
-        <button id="import-json">既存JSON読込</button>
-        <input id="import-file" type="file" accept=".json,application/json" style="display:none" />
-      </div>
-      <div class="row small" id="status">未起動</div>
+      <h1>学習データ収集</h1>
+      <p class="subtitle">カメラで手を映し、口の開閉と首の向きラベルを取ります。ゲームの手認識学習にそのまま使えます。</p>
 
-      <h3>口ラベル（手の開閉）</h3>
-      <div class="row">
-        <button id="capture-open">手を開いた状態を記録</button>
-        <button id="capture-closed">手を閉じた状態を記録</button>
+      <div id="det-badge" class="det-badge wait" aria-live="polite">
+        <span class="det-dot"></span>
+        <span id="det-text">カメラ未起動</span>
       </div>
 
-      <h3>首ラベル（向き）</h3>
-      <div class="row small">スティックで向きを指定して「向きラベルを記録」を押します。</div>
-      <div class="row stick-wrap">
-        <div id="label-stick">
-          <div id="label-stick-thumb"></div>
+      <section class="card">
+        <h2>① 準備</h2>
+        <div class="row">
+          <button type="button" class="primary" id="start">カメラ開始</button>
+          <label class="file-btn" for="import-file">既存 JSON 読込</label>
+          <input id="import-file" type="file" accept=".json,application/json" hidden />
         </div>
-        <div>
-          <div class="small">yaw: <span id="yaw-value">0.00</span></div>
-          <input id="yaw" type="range" min="-0.7" max="0.7" step="0.01" value="0" />
-          <div class="small">pitch: <span id="pitch-value">0.00</span></div>
-          <input id="pitch" type="range" min="-0.5" max="0.5" step="0.01" value="0" />
-          <button id="stick-center">スティック中央に戻す</button>
-        </div>
-      </div>
-      <div class="row"><button id="capture-tilt">向きラベルを記録</button></div>
+        <p class="small" id="status">未起動</p>
+      </section>
 
-      <h3>データ管理</h3>
-      <div class="row">
-        <button id="export">JSON出力（前回分に追加）</button>
-        <button id="clear-session">今回分だけ削除</button>
-        <button id="clear-all">全データ削除</button>
-      </div>
-      <div class="row small">
-        既存: <span id="count-base">0</span>,
-        今回: <span id="count-session">0</span>,
-        合計: <span id="count-total">0</span>,
-        open: <span id="count-open">0</span>,
-        closed: <span id="count-closed">0</span>,
-        向き: <span id="count-tilt">0</span>
-      </div>
-      <textarea id="output" placeholder="JSON出力結果がここに表示されます"></textarea>
-      <p class="small">保存先例: <code>medea-pipeline/data/hand-dataset.json</code></p>
+      <section class="card">
+        <h2>② 口（パー／グー）</h2>
+        <p class="small" style="margin: -4px 0 8px;">手が<strong class="ok">緑の検出中</strong>のときだけ記録できます。</p>
+        <div class="row">
+          <button type="button" class="big-mouth mouth-open" id="capture-open">手を開く（パー）</button>
+          <button type="button" class="big-mouth mouth-closed" id="capture-closed">手を閉じる（グー）</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>③ 首の向き</h2>
+        <p class="small" style="margin: -4px 0 8px;">スティックまたはスライダーでワニの首の向きを指定し、記録します。</p>
+        <div class="row stick-wrap">
+          <div id="label-stick" aria-label="首向きスティック">
+            <div id="label-stick-thumb"></div>
+          </div>
+          <div>
+            <div class="small">左右 yaw: <span id="yaw-value">0.00</span></div>
+            <input id="yaw" type="range" min="-0.7" max="0.7" step="0.01" value="0" />
+            <div class="small">上下 pitch: <span id="pitch-value">0.00</span></div>
+            <input id="pitch" type="range" min="-0.5" max="0.5" step="0.01" value="0" />
+            <div class="row tight">
+              <button type="button" id="stick-center">中央に戻す</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <button type="button" class="tilt-cap" id="capture-tilt">この向きで記録</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>ショートカット</h2>
+        <ul class="hints">
+          <li><span class="kbd">O</span> 手を開くを記録</li>
+          <li><span class="kbd">G</span> 手を閉じるを記録（G = グー）</li>
+          <li><span class="kbd">Enter</span> 向きを記録</li>
+          <li><span class="kbd">Backspace</span> 直前の<strong>今回分</strong>を1件取り消し</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>データ & 学習</h2>
+        <div class="counts">
+          <div>既存: <span id="count-base">0</span></div>
+          <div>今回: <span id="count-session">0</span></div>
+          <div>合計: <span id="count-total">0</span></div>
+          <div>open / closed / 向き</div>
+          <div><span id="count-open">0</span> / <span id="count-closed">0</span> / <span id="count-tilt">0</span></div>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <button type="button" class="primary" id="export">JSON 出力 &amp; 自動学習（ゲーム反映）</button>
+        </div>
+        <div class="row">
+          <button type="button" id="undo">直前を取り消し</button>
+          <button type="button" id="clear-session">今回分だけ削除</button>
+          <button type="button" id="clear-all">全削除</button>
+        </div>
+        <textarea id="output" placeholder="JSON がここに表示されます（エクスポート時）" readonly></textarea>
+        <p class="small">保存先の例: <code>medea-pipeline/data/hand-dataset.json</code>（自動学習は dev サーバー起動時のみ）</p>
+      </section>
     </section>
 
-    <section id="stage">
+    <section id="stage" aria-label="カメラプレビュー">
       <video id="video" autoplay playsinline muted></video>
       <canvas id="overlay"></canvas>
     </section>
   </main>
+
+  <div id="toast" role="status"></div>
 
   <script type="module">
     import { HandLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34';
@@ -143,16 +351,39 @@
     const importFileEl = document.getElementById('import-file');
     const stickEl = document.getElementById('label-stick');
     const stickThumbEl = document.getElementById('label-stick-thumb');
+    const detBadgeEl = document.getElementById('det-badge');
+    const detTextEl = document.getElementById('det-text');
+    const toastEl = document.getElementById('toast');
+
+    const MODEL_URLS = [
+      'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
+      'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+    ];
 
     let landmarker = null;
     let running = false;
     let lastFeatures = null;
+    let handDetected = false;
     let baseSamples = [];
     const sessionSamples = [];
 
     function setStatus(text, cls = '') {
       statusEl.textContent = text;
       statusEl.className = `small ${cls}`;
+    }
+
+    function setDetectionUi(detected) {
+      handDetected = detected;
+      detBadgeEl.className = `det-badge ${detected ? 'ok' : 'wait'}`;
+      detTextEl.textContent = detected ? '手を検出中 — 記録できます' : running ? '手が見えません（画面内に手を）' : 'カメラ未起動';
+    }
+
+    let toastTimer = null;
+    function toast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
     }
 
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -177,7 +408,6 @@
       return [...baseSamples, ...sessionSamples];
     }
 
-    /** ゲーム本体の main.ts と同じ。非ミラー映像で首・口特徴の上下左右を体感に合わせる */
     function landmarksForHandControl(lm) {
       return lm.map((p) => ({ x: 1 - p.x, y: 1 - p.y, z: p.z }));
     }
@@ -205,7 +435,8 @@
       ctx.clearRect(0, 0, overlay.width, overlay.height);
       if (!lm) return;
       const links = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
-      ctx.strokeStyle = 'rgba(0,255,136,.5)';
+      ctx.strokeStyle = 'rgba(0,255,136,.55)';
+      ctx.lineWidth = 2;
       for (const [a, b] of links) {
         ctx.beginPath();
         ctx.moveTo(lm[a].x * overlay.width, lm[a].y * overlay.height);
@@ -215,7 +446,7 @@
       ctx.fillStyle = '#00ff88';
       for (const p of lm) {
         ctx.beginPath();
-        ctx.arc(p.x * overlay.width, p.y * overlay.height, 3, 0, Math.PI * 2);
+        ctx.arc(p.x * overlay.width, p.y * overlay.height, 3.5, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -246,7 +477,8 @@
       baseSamples = merged;
       sessionSamples.length = 0;
       refreshCount();
-      setStatus('JSON出力しました。自動学習を実行中…', 'warn');
+      setStatus('JSON 出力済み。自動学習を実行中…', 'warn');
+      outputEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
       try {
         const res = await fetch('/api/pipeline/train', {
@@ -258,14 +490,17 @@
         if (!res.ok || !result?.ok) {
           throw new Error(result?.message || `HTTP ${res.status}`);
         }
-        setStatus('JSON保存と自動学習が完了しました（ゲームへ反映済み）', 'ok');
+        setStatus('自動学習まで完了（ゲームの hand-control-model.json に反映）', 'ok');
+        toast('学習が完了しました');
       } catch (e) {
-        setStatus(`JSON保存は完了。自動学習失敗: ${e.message || e}`, 'warn');
+        setStatus(`JSON は保存済み。自動学習に失敗: ${e.message || e}`, 'warn');
+        toast('学習 API に接続できませんでした（JSON はコピー可）');
       }
     }
 
     async function openCameraStreamPreferRear() {
       const tries = [
+        { video: { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
         { video: { facingMode: { exact: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } } },
         { video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } } },
         { video: { facingMode: { ideal: 'user' }, width: { ideal: 640 }, height: { ideal: 480 } } },
@@ -282,8 +517,28 @@
       throw lastErr || new Error('camera open failed');
     }
 
+    async function initLandmarker(vision) {
+      const delegates = ['GPU', 'CPU'];
+      let lastErr = null;
+      for (const delegate of delegates) {
+        for (const modelAssetPath of MODEL_URLS) {
+          try {
+            return await HandLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath, delegate },
+              runningMode: 'VIDEO',
+              numHands: 1,
+            });
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+      }
+      throw lastErr || new Error('HandLandmarker init failed');
+    }
+
     async function start() {
       setStatus('起動中…', 'warn');
+      setDetectionUi(false);
       const stream = await openCameraStreamPreferRear();
       video.srcObject = stream;
       await video.play();
@@ -293,21 +548,15 @@
       overlay.height = video.videoHeight || 480;
 
       const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm');
-      landmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numHands: 1,
-      });
+      landmarker = await initLandmarker(vision);
       running = true;
-      setStatus('起動済み（右手を映してください）', 'ok');
+      setStatus('カメラ OK。右手をカメラに向けてください', 'ok');
     }
 
     function captureSample(partial) {
       if (!lastFeatures) {
         setStatus('手が検出されてから記録してください', 'warn');
+        toast('手が見えません');
         return;
       }
       sessionSamples.push({
@@ -319,6 +568,19 @@
         targetPitch: partial.targetPitch ?? null,
       });
       refreshCount();
+      if (partial.mouthLabel === 1) toast('「開く」を記録しました');
+      else if (partial.mouthLabel === 0) toast('「閉じる」を記録しました');
+      else toast('向きを記録しました');
+    }
+
+    function undoLast() {
+      if (!sessionSamples.length) {
+        toast('取り消す今回分がありません');
+        return;
+      }
+      sessionSamples.pop();
+      refreshCount();
+      toast('直前の1件を取り消しました');
     }
 
     function loop(ts) {
@@ -328,10 +590,12 @@
       const lm = r?.landmarks?.[0];
       if (!lm) {
         draw(null);
+        setDetectionUi(false);
         return;
       }
       draw(lm);
       lastFeatures = extractFeatures(landmarksForHandControl(lm));
+      setDetectionUi(true);
     }
     requestAnimationFrame(loop);
 
@@ -383,6 +647,7 @@
         await start();
       } catch (e) {
         setStatus(`起動失敗: ${e.message || e}`, 'warn');
+        setDetectionUi(false);
       }
     });
     document.getElementById('capture-open').addEventListener('click', () => captureSample({ mouthLabel: 1 }));
@@ -395,11 +660,12 @@
       pitchEl.value = '0';
       syncSliders();
     });
+    document.getElementById('undo').addEventListener('click', undoLast);
     document.getElementById('clear-session').addEventListener('click', () => {
       sessionSamples.length = 0;
       refreshCount();
       outputEl.value = '';
-      setStatus('今回の収集データを削除しました', 'warn');
+      setStatus('今回分を削除しました', 'warn');
     });
     document.getElementById('clear-all').addEventListener('click', () => {
       sessionSamples.length = 0;
@@ -411,7 +677,9 @@
     });
     document.getElementById('export').addEventListener('click', () => { void exportMergedJson(); });
 
-    document.getElementById('import-json').addEventListener('click', () => importFileEl.click());
+    document.querySelector('label[for="import-file"]').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') importFileEl.click();
+    });
     importFileEl.addEventListener('change', async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -422,11 +690,30 @@
         baseSamples = imported;
         writeDatasetToStorage(baseSamples);
         refreshCount();
-        setStatus(`既存JSONを読み込みました: ${imported.length}件`, 'ok');
+        setStatus(`既存 JSON を読み込みました（${imported.length} 件）`, 'ok');
+        toast('JSON を取り込みました');
       } catch (err) {
-        setStatus(`JSON読込失敗: ${err.message || err}`, 'warn');
+        setStatus(`JSON 読込失敗: ${err.message || err}`, 'warn');
       } finally {
         importFileEl.value = '';
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.target.matches('textarea, input')) return;
+      const k = e.key.toLowerCase();
+      if (k === 'o') {
+        e.preventDefault();
+        captureSample({ mouthLabel: 1 });
+      } else if (k === 'g') {
+        e.preventDefault();
+        captureSample({ mouthLabel: 0 });
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        captureSample({ targetYaw: Number(yawEl.value), targetPitch: Number(pitchEl.value) });
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        undoLast();
       }
     });
 
@@ -436,9 +723,8 @@
     refreshCount();
     syncSliders();
     if (baseSamples.length > 0) {
-      setStatus(`前回の学習データを読み込みました: ${baseSamples.length}件`, 'ok');
+      setStatus(`前回のデータを復元しました（${baseSamples.length} 件）`, 'ok');
     }
   </script>
 </body>
 </html>
-

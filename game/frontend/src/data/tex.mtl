@@ -1,4 +1,4 @@
-# Blender 5.1.0 MTL File: 'None'
+# Blender 5.1.0 MTL File: 'Untitled.blend'
 # www.blender.org
 
 newmtl Bark
@@ -104,7 +104,7 @@ illum 1
 newmtl Material.001
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.000265 0.244504 0.062740
+Kd 0.007151 0.800023 0.007049
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.500000

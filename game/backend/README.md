@@ -25,7 +25,8 @@ REST API は部屋/プレイヤー管理、WebSocket は部屋内の移動同期
 
 - `GET /ws?roomId=<room>&playerId=<player>`
 - 受信（client -> server）:
-  - `{"type":"move","payload":{"x":0,"y":0,"z":0,"rotationY":0,"animation":"Run"}}`
+  - `{"type":"move","payload":{"x":0,"y":0,"z":0,"rotationY":0,"neckYaw":0,"neckPitch":0,"animation":"Idle","idleBob":0,"idlePitch":0,"idleRoll":0}}`
+  - `idleBob` / `idlePitch` / `idleRoll` は待機時の呼吸・ゆらぎ（他プレイヤー表示用）。`y` は揺らぎを除いた足元基準。
 - 送信（server -> client, 同じ room へブロードキャスト）:
   - `{"type":"snapshot","payload":{"roomId":"r1","version":12,"players":[...]}}`
 
