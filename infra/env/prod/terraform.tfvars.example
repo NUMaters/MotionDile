@@ -1,0 +1,14 @@
+project_name         = "waniar"
+environment          = "prod"
+aws_region           = "ap-northeast-1"
+
+domain_name          = "example.com"
+route53_zone_id      = "Z0000000000000"
+api_alb_dns_name     = "example-alb-123456.ap-northeast-1.elb.amazonaws.com"
+
+enable_cloudfront    = true
+
+# Keep a single node for single-replica backend
+node_desired_capacity = 1
+node_min_size         = 1
+node_max_size         = 1
