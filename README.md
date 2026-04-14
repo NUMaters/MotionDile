@@ -160,7 +160,8 @@ npm run pipeline:train:example  # サンプルデータから手モデル生成�
 WaniAR/
 ├── game/
 │   ├── frontend/
-│   │   └── src/main.ts        ← ゲーム frontend エントリ（TypeScript）
+│   │   ├── src/main.ts        ← ゲーム frontend エントリ（TypeScript）
+│   │   └── src/data/source/Лес.obj  ← ワールドマップ（OBJ）
 │   └── backend/               ← ゲーム同期バックエンド（Go + Gin + WebSocket）
 │       ├── cmd/server/main.go
 │       ├── internal/...

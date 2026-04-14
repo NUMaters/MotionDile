@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
@@ -111,10 +113,12 @@ scene.fog = new THREE.Fog(0x7ec8e3, 30, 80);
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.05, 200);
 
 // ─── Lights ───
-const hemi = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.7);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x9a8f7a, 5);
 scene.add(hemi);
+const ambient = new THREE.AmbientLight(0xffffff, 0.26);
+scene.add(ambient);
 
-const sun = new THREE.DirectionalLight(0xfff5e6, 1.2);
+const sun = new THREE.DirectionalLight(0xfff5e6, 1.1);
 sun.position.set(8, 12, 6);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
@@ -150,6 +154,7 @@ let model: THREE.Group | null = null;
 let mixer: THREE.AnimationMixer | null = null;
 const actions: Record<string, THREE.AnimationAction> = {};
 let modelBaseY = 0;
+let playerFootOffset = 0.06;
 let headBone: THREE.Object3D | null = null;
 let headBaseQuat: THREE.Quaternion | null = null;
 
@@ -157,6 +162,8 @@ let manualMouthOpen = false;
 let attackPending = false;
 const appBaseUrl = new URL(import.meta.env.BASE_URL || '/', window.location.origin);
 const HAND_MODEL_URL = new URL('models/hand-control-model.json', appBaseUrl).href;
+const WORLD_MAP_OBJ_URL = new URL('./data/tex.obj', import.meta.url).href;
+const WORLD_MAP_MTL_URL = new URL('./data/tex.mtl', import.meta.url).href;
 const GAME_API_BASE = import.meta.env.VITE_GAME_API_BASE || '/game-api/v1';
 const GAME_WS_BASE = import.meta.env.VITE_GAME_WS_BASE
   || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/game-ws`;
@@ -173,6 +180,16 @@ const MOVE_SEND_INTERVAL = 66;
 let currentMoveAnimation = 'Idle';
 let remoteModelTemplate: THREE.Group | null = null;
 let remoteAnimationClips: THREE.AnimationClip[] = [];
+const worldColliders: THREE.Mesh[] = [];
+const worldWalkables: THREE.Mesh[] = [];
+const worldObstacles: THREE.Mesh[] = [];
+const TERRAIN_MIN_NORMAL_Y = 0.45;
+const MAX_STEP_UP = 0.22;
+const PLAYER_GROUND_CLEARANCE = 0.018;
+const MATERIAL_002_SINK_OFFSET = 0.013;
+const PLAYER_COLLISION_RADIUS = 0.045;
+const FLAT_WORLD_MODE = true;
+let flatWorldY: number | null = null;
 
 // ─── Hand Tracking State ───
 let handLandmarker: HandLandmarker | null = null;
@@ -212,6 +229,11 @@ const RUN_STRETCH_EXIT = 1.01;
 let stickRunLatched = false;
 
 const box = new THREE.Box3();
+const collisionRay = new THREE.Raycaster();
+const terrainRay = new THREE.Raycaster();
+const vTmpA = new THREE.Vector3();
+const vTmpB = new THREE.Vector3();
+const vDown = new THREE.Vector3(0, -1, 0);
 const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const qNeck = new THREE.Quaternion();
 const clock = new THREE.Clock();
@@ -572,7 +594,7 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   // Draw connections (thumb-to-finger line for mouth feedback)
   ctx.strokeStyle = 'rgba(0,255,136,.4)';
   ctx.lineWidth = 2;
-  const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  const connections = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
   for (const [a, b] of connections) {
     ctx.beginPath();
     ctx.moveTo(lm[a].x * camOverlay.width, lm[a].y * camOverlay.height);
@@ -616,6 +638,133 @@ function applyHeadTracking(dt: number) {
 // ─── Helpers ───
 function smoothToward(current: number, target: number, dt: number, speed: number) {
   return current + (target - current) * (1 - Math.exp(-speed * dt));
+}
+
+function refreshWorldColliders(root: THREE.Group) {
+  worldColliders.length = 0;
+  worldWalkables.length = 0;
+  worldObstacles.length = 0;
+  root.traverse((o: THREE.Object3D) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    worldColliders.push(mesh);
+    const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.Material[];
+    const names = mats.map((m) => m?.name || '').join(' ').toLowerCase();
+    const isMaterial002 = names.includes('материал.002');
+    const isStone = names.includes('stone');
+    const walkable = isMaterial002 || /(grass|ground|plane|terrain|floor|land)/.test(names);
+    mesh.userData.isMaterial002 = isMaterial002;
+    mesh.userData.isStone = isStone;
+    if (walkable) worldWalkables.push(mesh);
+    else worldObstacles.push(mesh);
+  });
+}
+
+function getHitWorldNormal(hit: THREE.Intersection): THREE.Vector3 | null {
+  if (!hit.face) return null;
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+  return hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+}
+
+function sampleTerrainHeight(x: number, z: number, yHint: number): number | null {
+  if (!worldColliders.length) return null;
+  vTmpA.set(x, yHint + 8, z);
+  terrainRay.set(vTmpA, vDown);
+  terrainRay.near = 0;
+  terrainRay.far = 24;
+  const hits = terrainRay.intersectObjects(worldColliders, false);
+  for (const hit of hits) {
+    // 木の上・枝の上を地面として拾わない
+    if (hit.point.y > yHint + MAX_STEP_UP) continue;
+    const n = getHitWorldNormal(hit);
+    if (n && n.y >= TERRAIN_MIN_NORMAL_Y) return hit.point.y;
+  }
+  return null;
+}
+
+function sampleFlatFloorY(x: number, z: number): number | null {
+  if (!worldWalkables.length) return null;
+  vTmpA.set(x, 18, z);
+  terrainRay.set(vTmpA, vDown);
+  terrainRay.near = 0;
+  terrainRay.far = 40;
+  const hits = terrainRay.intersectObjects(worldWalkables, false);
+  let floorY: number | null = null;
+  for (const hit of hits) {
+    const n = getHitWorldNormal(hit);
+    if (!n || n.y < TERRAIN_MIN_NORMAL_Y) continue;
+    // キャノピーや枝を避けるため、最下段の上向き面を採用する
+    if (floorY == null || hit.point.y < floorY) floorY = hit.point.y;
+  }
+  return floorY;
+}
+
+function sampleMaterial002SinkOffset(x: number, z: number): number {
+  if (!worldWalkables.length) return 0;
+  vTmpA.set(x, 18, z);
+  terrainRay.set(vTmpA, vDown);
+  terrainRay.near = 0;
+  terrainRay.far = 40;
+  const hits = terrainRay.intersectObjects(worldWalkables, false);
+  for (const hit of hits) {
+    const n = getHitWorldNormal(hit);
+    if (!n || n.y < TERRAIN_MIN_NORMAL_Y) continue;
+    const mesh = hit.object as THREE.Mesh;
+    if (mesh.userData.isMaterial002) return MATERIAL_002_SINK_OFFSET;
+    return 0;
+  }
+  return 0;
+}
+
+function alignModelToFlatWorld(forceSnap = false) {
+  if (!FLAT_WORLD_MODE || !model) return;
+  if (flatWorldY == null && worldColliders.length) {
+    flatWorldY = sampleFlatFloorY(model.position.x, model.position.z);
+    if (flatWorldY == null) flatWorldY = GROUND_Y;
+  }
+  if (flatWorldY != null) {
+    const sink = sampleMaterial002SinkOffset(model.position.x, model.position.z);
+    modelBaseY = flatWorldY + playerFootOffset + PLAYER_GROUND_CLEARANCE - sink;
+    if (forceSnap) model.position.y = modelBaseY;
+  }
+}
+
+function canMoveOnWorld(nextX: number, nextZ: number): boolean {
+  if (!model || !worldObstacles.length) return true;
+  const cur = model.position;
+  vTmpA.set(nextX - cur.x, 0, nextZ - cur.z);
+  const dist = vTmpA.length();
+  if (dist < 1e-5) return true;
+  vTmpA.multiplyScalar(1 / dist);
+  const sideX = -vTmpA.z;
+  const sideZ = vTmpA.x;
+  const offsets = [0, PLAYER_COLLISION_RADIUS * 0.55, -PLAYER_COLLISION_RADIUS * 0.55];
+  const heights = [0.04, playerFootOffset * 0.7];
+
+  for (const h of heights) {
+    for (const off of offsets) {
+      vTmpB.set(cur.x + sideX * off, cur.y + h, cur.z + sideZ * off);
+      collisionRay.set(vTmpB, vTmpA);
+      collisionRay.near = 0.001;
+      collisionRay.far = dist + PLAYER_COLLISION_RADIUS * 0.8;
+      const hits = collisionRay.intersectObjects(worldObstacles, false);
+      if (!hits.length) continue;
+      for (const hit of hits) {
+        const mesh = hit.object as THREE.Mesh;
+        const aroundBody = hit.point.y > (cur.y - 0.08) && hit.point.y < (cur.y + playerFootOffset * 1.9);
+        if (mesh.userData.isStone) {
+          // 石は近距離でのめり込みだけを止める（遠めでの過剰ブロックを避ける）
+          if (aroundBody && hit.distance <= dist + PLAYER_COLLISION_RADIUS * 0.3) return false;
+          continue;
+        }
+        const n = getHitWorldNormal(hit);
+        if (!n) continue;
+        const isWallLike = Math.abs(n.y) < 0.6;
+        if (isWallLike && aroundBody) return false;
+      }
+    }
+  }
+  return true;
 }
 
 // ─── Animation setup ───
@@ -714,8 +863,12 @@ function updateCharacter(dt: number) {
     const fwdZ = Math.cos(yaw);
 
     const forward = -iz;
-    model.position.x += fwdX * forward * moveSpeed * dt;
-    model.position.z += fwdZ * forward * moveSpeed * dt;
+    const nextX = model.position.x + fwdX * forward * moveSpeed * dt;
+    const nextZ = model.position.z + fwdZ * forward * moveSpeed * dt;
+    if (canMoveOnWorld(nextX, nextZ)) {
+      model.position.x = nextX;
+      model.position.z = nextZ;
+    }
   }
 
   setLocomotionWeights(speed, smoothMouthOpenness, runNow);
@@ -731,12 +884,31 @@ function updateCharacter(dt: number) {
   mixer.update(dt);
   applyHeadTracking(dt);
 
-  // Ground collision
-  box.setFromObject(model);
-  if (box.min.y < GROUND_Y) {
-    model.position.y += GROUND_Y - box.min.y;
+  if (FLAT_WORLD_MODE) {
+    // フラット地形モード: 高さは固定（木・岩を地面として拾って登らない）
+    alignModelToFlatWorld(false);
+    model.position.y = smoothToward(model.position.y, modelBaseY, dt, 18);
+    box.setFromObject(model);
+    const minAllowedY = GROUND_Y + PLAYER_GROUND_CLEARANCE;
+    if (box.min.y < minAllowedY) {
+      model.position.y += minAllowedY - box.min.y;
+      modelBaseY = model.position.y;
+    }
   } else {
-    model.position.y = smoothToward(model.position.y, modelBaseY, dt, 6);
+    const terrainY = sampleTerrainHeight(model.position.x, model.position.z, model.position.y);
+    if (terrainY != null) {
+      const targetY = terrainY + playerFootOffset;
+      if (model.position.y < targetY) model.position.y = targetY;
+      else model.position.y = smoothToward(model.position.y, targetY, dt, 14);
+    } else {
+      // fallback: 既存の平面地面
+      box.setFromObject(model);
+      if (box.min.y < GROUND_Y) {
+        model.position.y += GROUND_Y - box.min.y;
+      } else {
+        model.position.y = smoothToward(model.position.y, modelBaseY, dt, 6);
+      }
+    }
   }
 }
 
@@ -1083,6 +1255,70 @@ function showLoadError(msg: string) {
 }
 
 const loader = new GLTFLoader();
+const mtlLoader = new MTLLoader();
+const objLoader = new OBJLoader();
+
+function normalizeWorldMap(object: THREE.Group) {
+  const b0 = new THREE.Box3().setFromObject(object);
+  const size = b0.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const targetSpan = 3;
+  if (maxDim > 0.001) {
+    object.scale.setScalar(targetSpan / maxDim);
+  }
+
+  const b1 = new THREE.Box3().setFromObject(object);
+  const center = b1.getCenter(new THREE.Vector3());
+  object.position.sub(center);
+  const b2 = new THREE.Box3().setFromObject(object);
+  object.position.y += GROUND_Y - b2.min.y;
+}
+
+async function loadWorldMap() {
+  try {
+    const mtl = await mtlLoader.loadAsync(WORLD_MAP_MTL_URL);
+    mtl.preload();
+    objLoader.setMaterials(mtl);
+    const obj = await objLoader.loadAsync(WORLD_MAP_OBJ_URL);
+    obj.traverse((o: THREE.Object3D) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      const mats = Array.isArray(material) ? material : (material ? [material] : []);
+      for (const m of mats) {
+        m.side = THREE.FrontSide;
+        // tex.mtl の色味を優先する（追加の色補正は行わない）
+        m.needsUpdate = true;
+      }
+    });
+
+    normalizeWorldMap(obj);
+    scene.add(obj);
+    refreshWorldColliders(obj);
+    if (FLAT_WORLD_MODE) {
+      // 地面材質（Grass/Plane 等）だけで床Yを決定し、木の根元や岩底面を除外
+      const y = sampleFlatFloorY(0, 0);
+      if (y != null) {
+        obj.position.y += GROUND_Y - y;
+        refreshWorldColliders(obj);
+        flatWorldY = GROUND_Y;
+      }
+    }
+    // 森林OBJに地面ポリゴンが無いので、既存 ground は残して下地に使う
+    ground.visible = true;
+    grid.visible = false;
+    if (model && !FLAT_WORLD_MODE) {
+      const y = sampleTerrainHeight(model.position.x, model.position.z, model.position.y);
+      if (y != null) model.position.y = y + playerFootOffset;
+    }
+    alignModelToFlatWorld(true);
+    console.log('World map loaded:', WORLD_MAP_OBJ_URL);
+  } catch (e) {
+    console.warn('World map load failed, fallback to default ground.', e);
+  }
+}
 
 /** GLTFLoader が外部バッファを解決するときのベース（相対 URI 用） */
 function gltfBasePath(url: string) {
@@ -1156,7 +1392,10 @@ async function applyLoadedGltf(gltf: GLTF) {
   scene.add(model);
 
   normalizeCharacterRoot(model);
+  box.setFromObject(model);
+  playerFootOffset = Math.max(0.03, model.position.y - box.min.y);
   modelBaseY = model.position.y;
+  alignModelToFlatWorld(true);
   remoteModelTemplate = model;
   remoteAnimationClips = gltf.animations;
   refreshRemoteVisualsAfterModelLoaded();
@@ -1289,6 +1528,7 @@ async function loadModel() {
 
 updateHudText();
 void initMultiplayer();
+void loadWorldMap();
 void loadHandControlModel();
 void loadModel();
 
