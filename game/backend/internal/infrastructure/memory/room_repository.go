@@ -28,9 +28,29 @@ func (r *RoomRepository) Join(_ context.Context, roomID string, initial entity.P
 	defer r.mu.Unlock()
 
 	room := r.ensureRoom(roomID)
+
+	if existing, ok := room.players[initial.PlayerID]; ok {
+		initial.Color = existing.Color
+	} else {
+		initial.Color = pickUnusedColor(room)
+	}
+
 	room.players[initial.PlayerID] = initial
 	room.version++
 	return snapshotFromRoom(roomID, room), nil
+}
+
+func pickUnusedColor(room *roomState) string {
+	used := make(map[string]bool, len(room.players))
+	for _, p := range room.players {
+		used[p.Color] = true
+	}
+	for _, c := range entity.PlayerColors {
+		if !used[c] {
+			return c
+		}
+	}
+	return entity.PlayerColors[len(room.players)%len(entity.PlayerColors)]
 }
 
 func (r *RoomRepository) UpsertState(_ context.Context, roomID string, state entity.PlayerState) (entity.RoomSnapshot, error) {
@@ -38,6 +58,9 @@ func (r *RoomRepository) UpsertState(_ context.Context, roomID string, state ent
 	defer r.mu.Unlock()
 
 	room := r.ensureRoom(roomID)
+	if existing, ok := room.players[state.PlayerID]; ok {
+		state.Color = existing.Color
+	}
 	room.players[state.PlayerID] = state
 	room.version++
 	return snapshotFromRoom(roomID, room), nil

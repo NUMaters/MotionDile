@@ -57,7 +57,7 @@
 - **TypeScript v5.8** — ゲーム本体（`game/frontend/src/main.ts`）と学習スクリプト（`medea-pipeline/scripts/train-hand-control-model.ts`）の型付け
 - **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
 - **Go + Gin** — `game/backend` の REST API（ルーム参加/退出/スナップショット）
-- **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）
+- **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含め、他クライアントでも呼吸表現を再現
 - **Vite v6.2** — 開発サーバー・ビルドツール（`.ts` をそのままトランスパイル）
 - **serve** — 静的 HTTP サーバー（ビューア配信）
 
@@ -125,6 +125,7 @@ npm run viewer        # http://localhost:3000/viewer でビューア起動
 npm run dev           # Go backend(8080) + Vite frontend(5173~) を同時起動
 npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + WebSocket, 8090）
 npm run dev:all       # game backend(8090) + medea backend(8080) + Vite frontend(5173~) を同時起動
+npm run down:all      # dev:all で起動した 5173/8080/8090 を一括停止
 npm run pipeline:train:example  # サンプルデータから手モデル生成（public/models/hand-control-model.json）
 ```
 

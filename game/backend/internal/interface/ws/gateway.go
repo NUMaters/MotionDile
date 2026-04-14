@@ -35,6 +35,9 @@ type movePayload struct {
 	NeckYaw   float64 `json:"neckYaw"`
 	NeckPitch float64 `json:"neckPitch"`
 	Animation string  `json:"animation"`
+	IdleBob   float64 `json:"idleBob"`
+	IdlePitch float64 `json:"idlePitch"`
+	IdleRoll  float64 `json:"idleRoll"`
 }
 
 type snapshotEnvelope struct {
@@ -142,6 +145,9 @@ func (g *Gateway) readPump(client *Client) {
 			NeckYaw:   mv.NeckYaw,
 			NeckPitch: mv.NeckPitch,
 			Animation: mv.Animation,
+			IdleBob:   mv.IdleBob,
+			IdlePitch: mv.IdlePitch,
+			IdleRoll:  mv.IdleRoll,
 		})
 		if err != nil {
 			continue

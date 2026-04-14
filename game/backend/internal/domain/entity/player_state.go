@@ -9,7 +9,24 @@ type PlayerState struct {
 	NeckYaw   float64 `json:"neckYaw"`
 	NeckPitch float64 `json:"neckPitch"`
 	Animation string  `json:"animation"`
+	Color     string  `json:"color"`
+	IdleBob   float64 `json:"idleBob"`
+	IdlePitch float64 `json:"idlePitch"`
+	IdleRoll  float64 `json:"idleRoll"`
 	UpdatedAt int64   `json:"updatedAt"`
+}
+
+var PlayerColors = []string{
+	"#ff9060", // オレンジ
+	"#60a0ff", // 青
+	"#e070e0", // 紫
+	"#fff040", // 黄
+	"#ff6070", // 赤
+	"#50e0e0", // シアン
+	"#ffa0b0", // ピンク
+	"#a080ff", // インディゴ
+	"#e0a050", // ブラウン
+	"#80ff80", // ライトグリーン
 }
 
 type RoomSnapshot struct {

@@ -36,6 +36,10 @@ type NetPlayerState = {
   neckYaw: number;
   neckPitch: number;
   animation: string;
+  color: string;
+  idleBob?: number;
+  idlePitch?: number;
+  idleRoll?: number;
   updatedAt: number;
 };
 
@@ -56,6 +60,13 @@ type RemotePlayer = {
   targetYaw: number;
   targetNeckYaw: number;
   targetNeckPitch: number;
+  targetIdleBob: number;
+  targetIdlePitch: number;
+  targetIdleRoll: number;
+  smoothIdleBob: number;
+  smoothIdlePitch: number;
+  smoothIdleRoll: number;
+  prevIdleBob: number;
   smoothNeckYaw: number;
   smoothNeckPitch: number;
   headBone: THREE.Object3D | null;
@@ -64,6 +75,7 @@ type RemotePlayer = {
   actions: Record<string, THREE.AnimationAction>;
   mixer: THREE.AnimationMixer | null;
   isProxy: boolean;
+  color: string;
 };
 
 function getEl<T extends HTMLElement>(id: string): T {
@@ -180,13 +192,17 @@ const MOVE_SEND_INTERVAL = 66;
 let currentMoveAnimation = 'Idle';
 let remoteModelTemplate: THREE.Group | null = null;
 let remoteAnimationClips: THREE.AnimationClip[] = [];
+let localPlayerColor = '';
+let localModelTinted = false;
 const worldColliders: THREE.Mesh[] = [];
 const worldWalkables: THREE.Mesh[] = [];
 const worldObstacles: THREE.Mesh[] = [];
 const TERRAIN_MIN_NORMAL_Y = 0.45;
 const MAX_STEP_UP = 0.22;
+/** ワニのデフォルト高さオフセット（正で上、負で下） — ここを変えて微調整 */
+const PLAYER_HEIGHT_OFFSET = 0.575;
 const PLAYER_GROUND_CLEARANCE = 0.018;
-const MATERIAL_002_SINK_OFFSET = 0.013;
+const MATERIAL_002_SINK_OFFSET = 0.0022;
 const PLAYER_COLLISION_RADIUS = 0.045;
 const FLAT_WORLD_MODE = true;
 let flatWorldY: number | null = null;
@@ -227,6 +243,22 @@ let handControlModel: HandControlModel = structuredClone(DEFAULT_HAND_CONTROL_MO
 const RUN_STRETCH_ENTER = 1.06;
 const RUN_STRETCH_EXIT = 1.01;
 let stickRunLatched = false;
+const MOVE_ACCEL_SMOOTH = 11;
+const MOVE_DECEL_SMOOTH = 7;
+const TURN_INPUT_SMOOTH = 10;
+const RUN_BLEND_SMOOTH = 7;
+const IDLE_SWAY_SPEED = 0.2;
+const IDLE_BOB_AMOUNT = 0.00001;
+const IDLE_PITCH_AMOUNT = 0.03;
+const IDLE_ROLL_AMOUNT = 0.025;
+let smoothForwardInput = 0;
+let smoothMoveSpeed = 0;
+let smoothTurnInput = 0;
+let smoothRunBlend = 0;
+let idleSwayPhase = 0;
+let idleBobOffset = 0;
+let idlePitchOffset = 0;
+let idleRollOffset = 0;
 
 const box = new THREE.Box3();
 const collisionRay = new THREE.Raycaster();
@@ -239,10 +271,10 @@ const qNeck = new THREE.Quaternion();
 const clock = new THREE.Clock();
 
 // Third-person camera params (head-close fixed follow camera)
-const CAM_HEIGHT = 0.02;
-const CAM_DISTANCE = 0.07;
-const CAM_LOOK_AHEAD = 1.50;
-const CAM_LOOK_HEIGHT = 0.22;
+const CAM_HEIGHT = 0.03;
+const CAM_DISTANCE = 0.09;
+const CAM_LOOK_AHEAD = 1.30;
+const CAM_LOOK_HEIGHT = 0.14;
 
 // ─── Joystick state ───
 const joystick = {
@@ -724,7 +756,7 @@ function alignModelToFlatWorld(forceSnap = false) {
   }
   if (flatWorldY != null) {
     const sink = sampleMaterial002SinkOffset(model.position.x, model.position.z);
-    modelBaseY = flatWorldY + playerFootOffset + PLAYER_GROUND_CLEARANCE - sink;
+    modelBaseY = flatWorldY + playerFootOffset + PLAYER_GROUND_CLEARANCE + PLAYER_HEIGHT_OFFSET - sink;
     if (forceSnap) model.position.y = modelBaseY;
   }
 }
@@ -801,19 +833,26 @@ function setupActions(gltf: GLTF) {
 }
 
 // ─── Locomotion ───
-function setLocomotionWeights(speed: number, mouthAmount: number, run: boolean) {
-  const fast = run && speed > 0.02;
-  const walk = !fast && speed > 0.01;
-  const idle = !walk && !fast;
+function setLocomotionWeights(speed: number, mouthAmount: number, runBlend: number) {
+  const move = clamp(speed, 0, 1);
+  const run = clamp(runBlend, 0, 1);
+  const runGate = clamp((move - 0.42) / 0.36, 0, 1);
+  const runWeight = move * run * runGate;
+  const walkWeight = clamp(move - runWeight, 0, 1);
+  const idleWeight = clamp(1 - move, 0, 1);
+  const sum = Math.max(0.0001, idleWeight + walkWeight + runWeight);
+  const idle = idleWeight / sum;
+  const walk = walkWeight / sum;
+  const fast = runWeight / sum;
   const closed = 1 - mouthAmount;
 
   const w = {
-    Idle: (idle ? 1 : 0) * closed,
-    Walk: (walk ? 1 : 0) * closed,
-    Run: (fast ? 1 : 0) * closed,
-    Idle_MouthOpen: (idle ? 1 : 0) * mouthAmount,
-    Walk_MouthOpen: (walk ? 1 : 0) * mouthAmount,
-    Run_MouthOpen: (fast ? 1 : 0) * mouthAmount,
+    Idle: idle * closed,
+    Walk: walk * closed,
+    Run: fast * closed,
+    Idle_MouthOpen: idle * mouthAmount,
+    Walk_MouthOpen: walk * mouthAmount,
+    Run_MouthOpen: fast * mouthAmount,
   };
   for (const [name, wt] of Object.entries(w)) {
     if (actions[name]) actions[name].setEffectiveWeight(wt);
@@ -839,30 +878,37 @@ function updateCharacter(dt: number) {
   if (!model || !mixer) return;
 
   const { ix, iz, len } = getInputVector();
-  const speed = len;
+  const inputSpeed = len;
+  const targetForward = inputSpeed > 0.001 ? -iz : 0;
+  const accelSpeed = Math.abs(targetForward) > Math.abs(smoothForwardInput) ? MOVE_ACCEL_SMOOTH : MOVE_DECEL_SMOOTH;
+  smoothForwardInput = smoothToward(smoothForwardInput, targetForward, dt, accelSpeed);
+  smoothMoveSpeed = smoothToward(smoothMoveSpeed, Math.abs(smoothForwardInput), dt, accelSpeed);
+  smoothTurnInput = smoothToward(smoothTurnInput, ix, dt, TURN_INPUT_SMOOTH);
   const targetMouth = handState.detected ? handState.mouthOpenness : (manualMouthOpen ? 1 : 0);
   smoothMouthOpenness = smoothToward(smoothMouthOpenness, targetMouth, dt, 10);
   const stretch = joystick.active ? joystick.rawStretch : 0;
   if (stretch >= RUN_STRETCH_ENTER) stickRunLatched = true;
   else if (stretch <= RUN_STRETCH_EXIT) stickRunLatched = false;
   const stickRun = stickRunLatched;
-  const runNow = stickRun || keys['ShiftLeft'] || keys['ShiftRight'];
-  if (speed > 0.05) currentMoveAnimation = runNow ? 'Run' : 'Walk';
+  const runNow = (stickRun || keys['ShiftLeft'] || keys['ShiftRight']) && smoothMoveSpeed > 0.06;
+  smoothRunBlend = smoothToward(smoothRunBlend, runNow ? 1 : 0, dt, RUN_BLEND_SMOOTH);
+  if (smoothMoveSpeed > 0.56 && smoothRunBlend > 0.45) currentMoveAnimation = 'Run';
+  else if (smoothMoveSpeed > 0.07) currentMoveAnimation = 'Walk';
   else currentMoveAnimation = 'Idle';
   if (smoothMouthOpenness > 0.5) currentMoveAnimation = `${currentMoveAnimation}_MouthOpen`;
 
-  if (speed > 0.05) {
-    const moveSpeed = runNow ? 0.1 : 0.06;
+  if (smoothMoveSpeed > 0.005) {
+    const moveSpeed = 0.15 + (0.23 - 0.15) * smoothRunBlend;
 
     // Joystick up (-iz) = wani forward, ix = turn
     const turnRate = 3.5;
-    model.rotation.y -= ix * turnRate * dt;
+    model.rotation.y -= smoothTurnInput * turnRate * dt;
 
     const yaw = model.rotation.y;
     const fwdX = Math.sin(yaw);
     const fwdZ = Math.cos(yaw);
 
-    const forward = -iz;
+    const forward = smoothForwardInput;
     const nextX = model.position.x + fwdX * forward * moveSpeed * dt;
     const nextZ = model.position.z + fwdZ * forward * moveSpeed * dt;
     if (canMoveOnWorld(nextX, nextZ)) {
@@ -871,7 +917,7 @@ function updateCharacter(dt: number) {
     }
   }
 
-  setLocomotionWeights(speed, smoothMouthOpenness, runNow);
+  setLocomotionWeights(smoothMoveSpeed, smoothMouthOpenness, smoothRunBlend);
 
   if (attackPending && actions.Attack) {
     attackPending = false;
@@ -910,6 +956,18 @@ function updateCharacter(dt: number) {
       }
     }
   }
+  const idleWeight = clamp((0.12 - smoothMoveSpeed) / 0.12, 0, 1);
+  idleSwayPhase += dt * (IDLE_SWAY_SPEED + idleWeight * 0.6);
+  const targetBob = (Math.sin(idleSwayPhase * 2.0) * IDLE_BOB_AMOUNT
+    + Math.sin(idleSwayPhase * 4.3) * (IDLE_BOB_AMOUNT * 0.32)) * idleWeight;
+  const targetPitch = Math.sin(idleSwayPhase * 1.5) * IDLE_PITCH_AMOUNT * idleWeight;
+  const targetRoll = Math.sin(idleSwayPhase * 1.2 + 0.8) * IDLE_ROLL_AMOUNT * idleWeight;
+  idleBobOffset = smoothToward(idleBobOffset, targetBob, dt, 8);
+  idlePitchOffset = smoothToward(idlePitchOffset, targetPitch, dt, 7);
+  idleRollOffset = smoothToward(idleRollOffset, targetRoll, dt, 7);
+  model.position.y += idleBobOffset;
+  model.rotation.x = idlePitchOffset;
+  model.rotation.z = idleRollOffset;
 }
 
 // ─── Third-person camera ───
@@ -919,24 +977,25 @@ function updateCamera() {
   const yaw = model.rotation.y;
   const fwdX = Math.sin(yaw);
   const fwdZ = Math.cos(yaw);
+  const camAnchorY = model.position.y - idleBobOffset;
 
   // Fixed offset from wani to avoid apparent zoom when turning.
   const targetPos = new THREE.Vector3(
     model.position.x - fwdX * CAM_DISTANCE,
-    model.position.y + CAM_HEIGHT,
+    camAnchorY + CAM_HEIGHT,
     model.position.z - fwdZ * CAM_DISTANCE
   );
   // Look-ahead in facing direction for third-person head-close view.
   const targetLook = new THREE.Vector3(
     model.position.x + fwdX * CAM_LOOK_AHEAD,
-    model.position.y + CAM_LOOK_HEIGHT,
+    camAnchorY + CAM_LOOK_HEIGHT,
     model.position.z + fwdZ * CAM_LOOK_AHEAD
   );
   camera.position.copy(targetPos);
   camera.lookAt(targetLook);
 
   sun.position.set(model.position.x + 8, 12, model.position.z + 6);
-  sun.target.position.copy(model.position);
+  sun.target.position.set(model.position.x, camAnchorY, model.position.z);
   sun.target.updateMatrixWorld();
 }
 
@@ -1012,8 +1071,13 @@ function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
   const root = remoteModel?.root ?? createRemoteProxyRoot();
   const remoteHead = remoteModel ? getRemoteHead(root) : { headBone: null, headBaseQuat: null };
 
-  root.position.set(player.x, player.y, player.z);
+  if (player.color && remoteModel) tintModel(root, player.color);
+
+  const ib = player.idleBob ?? 0;
+  root.position.set(player.x, player.y + ib, player.z);
   root.rotation.y = player.rotationY;
+  root.rotation.x = player.idlePitch ?? 0;
+  root.rotation.z = player.idleRoll ?? 0;
   scene.add(root);
 
   const remote: RemotePlayer = {
@@ -1022,6 +1086,13 @@ function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
     targetYaw: player.rotationY,
     targetNeckYaw: player.neckYaw ?? 0,
     targetNeckPitch: player.neckPitch ?? 0,
+    targetIdleBob: player.idleBob ?? 0,
+    targetIdlePitch: player.idlePitch ?? 0,
+    targetIdleRoll: player.idleRoll ?? 0,
+    smoothIdleBob: player.idleBob ?? 0,
+    smoothIdlePitch: player.idlePitch ?? 0,
+    smoothIdleRoll: player.idleRoll ?? 0,
+    prevIdleBob: ib,
     smoothNeckYaw: 0,
     smoothNeckPitch: 0,
     headBone: remoteHead.headBone,
@@ -1030,6 +1101,7 @@ function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
     actions: remoteModel?.actions ?? {},
     mixer: remoteModel?.mixer ?? null,
     isProxy: !remoteModel,
+    color: player.color || '',
   };
   setRemoteAnimation(remote, remote.desiredAnimation);
   return remote;
@@ -1045,13 +1117,18 @@ function upgradeRemoteVisualIfReady(remote: RemotePlayer) {
   remote.actions = remoteModel.actions;
   remote.mixer = remoteModel.mixer;
   remote.isProxy = false;
+  if (remote.color) tintModel(remote.root, remote.color);
   const remoteHead = getRemoteHead(remote.root);
   remote.headBone = remoteHead.headBone;
   remote.headBaseQuat = remoteHead.headBaseQuat;
   remote.smoothNeckYaw = 0;
   remote.smoothNeckPitch = 0;
   remote.root.position.copy(remote.targetPos);
+  remote.root.position.y += remote.smoothIdleBob;
+  remote.prevIdleBob = remote.smoothIdleBob;
   remote.root.rotation.y = remote.targetYaw;
+  remote.root.rotation.x = remote.smoothIdlePitch;
+  remote.root.rotation.z = remote.smoothIdleRoll;
   scene.add(remote.root);
   setRemoteAnimation(remote, remote.desiredAnimation);
 }
@@ -1062,11 +1139,78 @@ function refreshRemoteVisualsAfterModelLoaded() {
   }
 }
 
+/** ワニモデルのスケール — ここを変えてサイズ調整 */
+const WANI_SCALE = 2;
+
 function normalizeCharacterRoot(root: THREE.Group) {
+  root.scale.setScalar(WANI_SCALE);
+  root.updateMatrixWorld(true);
   const b = new THREE.Box3().setFromObject(root);
   const center = b.getCenter(new THREE.Vector3());
   root.position.sub(center);
   root.position.y = GROUND_Y - b.min.y;
+}
+
+const TINT_SKIP_NAME =
+  /tongue|mouth|gum|teeth|tooth|lip|inner|oral|palate|saliva|口|舌|歯|歯茎|唇|目|eye|pupil|iris/i;
+
+function isLikelyOralInterior(mat: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial): boolean {
+  const c = mat.color;
+  const r = c.r;
+  const g = c.g;
+  const b = c.b;
+  if (r > g + 0.04) return true;
+  if (r > 0.35 && g < 0.28 && b < 0.35) return true;
+  return false;
+}
+
+/** テクスチャ付き体メッシュのアルベドをどれだけプレイヤー色へ寄せるか（大きいほど色の差がはっきり） */
+const BODY_TINT_MAP_BLEND = 0.88;
+const BODY_TINT_SOLID_BLEND = 0.78;
+/** ライトに頼らず体色の差を付ける（口内除外メッシュのみ） */
+const BODY_EMISSIVE_MUL = 0.35;
+const BODY_EMISSIVE_INTENSITY = 0.55;
+
+function applyTintToMaterial(
+  src: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial,
+  tint: THREE.Color,
+  white: THREE.Color
+): THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial {
+  const clone = src.clone() as THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
+  if (src.map) {
+    clone.color.copy(white).lerp(tint, BODY_TINT_MAP_BLEND);
+  } else {
+    clone.color.copy(src.color).lerp(tint, BODY_TINT_SOLID_BLEND);
+  }
+  clone.emissive.copy(tint).multiplyScalar(BODY_EMISSIVE_MUL);
+  clone.emissiveIntensity = BODY_EMISSIVE_INTENSITY;
+  return clone;
+}
+
+function tintModel(root: THREE.Object3D, hexColor: string) {
+  if (!hexColor) return;
+  const tint = new THREE.Color(hexColor);
+  const white = new THREE.Color(0xffffff);
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (TINT_SKIP_NAME.test(mesh.name)) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (let i = 0; i < mats.length; i++) {
+      const raw = mats[i];
+      if (!raw || typeof raw !== 'object' || !('isMaterial' in raw)) continue;
+      const src = raw as THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
+      if (!src.isMeshStandardMaterial) continue;
+      if (TINT_SKIP_NAME.test(src.name)) continue;
+      if (isLikelyOralInterior(src)) continue;
+      const clone = applyTintToMaterial(src, tint, white);
+      if (Array.isArray(mesh.material)) {
+        mesh.material[i] = clone;
+      } else {
+        mesh.material = clone;
+      }
+    }
+  });
 }
 
 function disposeRemotePlayer(remote: RemotePlayer) {
@@ -1085,19 +1229,35 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
   const aliveIDs = new Set<string>();
 
   for (const p of snapshot.players) {
-    if (p.playerId === playerId) continue;
+    if (p.playerId === playerId) {
+      if (p.color) {
+        localPlayerColor = p.color;
+        if (model && !localModelTinted) {
+          tintModel(model, localPlayerColor);
+          localModelTinted = true;
+        }
+      }
+      continue;
+    }
     aliveIDs.add(p.playerId);
     let remote = remotePlayers.get(p.playerId);
     if (!remote) {
       remote = makeRemotePlayer(p);
       remotePlayers.set(p.playerId, remote);
     } else {
+      if (p.color && p.color !== remote.color) {
+        remote.color = p.color;
+        if (!remote.isProxy) tintModel(remote.root, remote.color);
+      }
       upgradeRemoteVisualIfReady(remote);
     }
     remote.targetPos.set(p.x, p.y, p.z);
     remote.targetYaw = p.rotationY;
     remote.targetNeckYaw = p.neckYaw ?? 0;
     remote.targetNeckPitch = p.neckPitch ?? 0;
+    remote.targetIdleBob = p.idleBob ?? 0;
+    remote.targetIdlePitch = p.idlePitch ?? 0;
+    remote.targetIdleRoll = p.idleRoll ?? 0;
     remote.desiredAnimation = p.animation || 'Idle';
     setRemoteAnimation(remote, remote.desiredAnimation);
   }
@@ -1118,7 +1278,18 @@ async function joinRoom() {
   });
   if (!res.ok) throw new Error(`join failed: HTTP ${res.status}`);
   const payload = await res.json() as { snapshot?: RoomSnapshot };
-  if (payload.snapshot) applyRoomSnapshot(payload.snapshot);
+  if (payload.snapshot) {
+    const me = payload.snapshot.players.find(p => p.playerId === playerId);
+    console.log(`[joinRoom] myColor=${me?.color}, model=${!!model}, playerId=${playerId}`);
+    if (me?.color) {
+      localPlayerColor = me.color;
+      if (model && !localModelTinted) {
+        tintModel(model, localPlayerColor);
+        localModelTinted = true;
+      }
+    }
+    applyRoomSnapshot(payload.snapshot);
+  }
 }
 
 async function leaveRoom() {
@@ -1182,12 +1353,15 @@ function sendLocalMove(now: number) {
     type: 'move',
     payload: {
       x: model.position.x,
-      y: model.position.y,
+      y: model.position.y - idleBobOffset,
       z: model.position.z,
       rotationY: model.rotation.y,
       neckYaw: smoothNeckYaw,
       neckPitch: smoothNeckPitch,
       animation: currentMoveAnimation,
+      idleBob: idleBobOffset,
+      idlePitch: idlePitchOffset,
+      idleRoll: idleRollOffset,
     },
   }));
 }
@@ -1195,8 +1369,17 @@ function sendLocalMove(now: number) {
 function updateRemotePlayers(dt: number) {
   const lerpT = 1 - Math.exp(-8 * dt);
   for (const remote of remotePlayers.values()) {
+    remote.root.position.y -= remote.prevIdleBob;
     remote.root.position.lerp(remote.targetPos, lerpT);
+    remote.smoothIdleBob = smoothToward(remote.smoothIdleBob, remote.targetIdleBob, dt, 14);
+    remote.smoothIdlePitch = smoothToward(remote.smoothIdlePitch, remote.targetIdlePitch, dt, 10);
+    remote.smoothIdleRoll = smoothToward(remote.smoothIdleRoll, remote.targetIdleRoll, dt, 10);
+    remote.root.position.y += remote.smoothIdleBob;
+    remote.prevIdleBob = remote.smoothIdleBob;
+
     remote.root.rotation.y += (remote.targetYaw - remote.root.rotation.y) * lerpT;
+    remote.root.rotation.x = remote.smoothIdlePitch;
+    remote.root.rotation.z = remote.smoothIdleRoll;
 
     if (remote.headBone && remote.headBaseQuat) {
       remote.smoothNeckYaw = smoothToward(remote.smoothNeckYaw, remote.targetNeckYaw, dt, 10);
@@ -1396,8 +1579,13 @@ async function applyLoadedGltf(gltf: GLTF) {
   playerFootOffset = Math.max(0.03, model.position.y - box.min.y);
   modelBaseY = model.position.y;
   alignModelToFlatWorld(true);
-  remoteModelTemplate = model;
+  remoteModelTemplate = cloneSkinned(model) as THREE.Group;
   remoteAnimationClips = gltf.animations;
+  console.log(`[applyLoadedGltf] localPlayerColor=${localPlayerColor}`);
+  if (localPlayerColor && !localModelTinted) {
+    tintModel(model, localPlayerColor);
+    localModelTinted = true;
+  }
   refreshRemoteVisualsAfterModelLoaded();
 
   setupActions(gltf);

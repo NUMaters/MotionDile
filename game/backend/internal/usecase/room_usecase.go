@@ -27,6 +27,9 @@ type MoveInput struct {
 	NeckYaw   float64 `json:"neckYaw"`
 	NeckPitch float64 `json:"neckPitch"`
 	Animation string  `json:"animation"`
+	IdleBob   float64 `json:"idleBob"`
+	IdlePitch float64 `json:"idlePitch"`
+	IdleRoll  float64 `json:"idleRoll"`
 }
 
 type RoomUsecase struct {
@@ -68,6 +71,9 @@ func (u *RoomUsecase) Move(ctx context.Context, in MoveInput) (entity.RoomSnapsh
 		NeckYaw:   in.NeckYaw,
 		NeckPitch: in.NeckPitch,
 		Animation: in.Animation,
+		IdleBob:   in.IdleBob,
+		IdlePitch: in.IdlePitch,
+		IdleRoll:  in.IdleRoll,
 		UpdatedAt: time.Now().UnixMilli(),
 	}
 	return u.repo.UpsertState(ctx, in.RoomID, state)

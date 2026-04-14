@@ -11,6 +11,7 @@
     "dev:backend": "cd medea-pipeline/backend && go run ./cmd/server",
     "dev:game-backend": "cd game/backend && go run ./cmd/server",
     "dev:all": "concurrently -k -n game,medea,frontend \"npm:dev:game-backend\" \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "down:all": "for p in 5173 8080 8090; do lsof -ti -iTCP:$p -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null; done; echo 'all stopped'",
     "build": "vite build",
     "preview": "vite preview",
     "pipeline:train": "npx --yes tsx medea-pipeline/scripts/train-hand-control-model.ts",
