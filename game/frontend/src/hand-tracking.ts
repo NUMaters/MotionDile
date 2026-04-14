@@ -273,11 +273,13 @@ export function applyHeadTracking(
   dt: number,
   headBone: THREE.Object3D | null,
   headBaseQuat: THREE.Quaternion | null,
+  /** ジャンプなどで加える首のピッチ（ラジアン）。手の pitch に加算 */
+  additiveNeckPitch = 0,
 ): void {
   if (!headBone || !headBaseQuat) return;
   const hasTracking = handState.detected && cameraActive;
   const targetYaw = hasTracking ? handState.neckYaw : 0;
-  const targetPitch = hasTracking ? handState.neckPitch : 0;
+  const targetPitch = (hasTracking ? handState.neckPitch : 0) + additiveNeckPitch;
   const speed = 9;
   smoothNeckYaw = smoothToward(smoothNeckYaw, targetYaw, dt, speed);
   smoothNeckPitch = smoothToward(smoothNeckPitch, targetPitch, dt, speed);

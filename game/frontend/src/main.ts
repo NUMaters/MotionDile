@@ -10,11 +10,17 @@ import {
   IDLE_SWAY_SPEED, IDLE_BOB_AMOUNT, IDLE_PITCH_AMOUNT, IDLE_ROLL_AMOUNT,
   PLAYER_GROUND_CLEARANCE, PLAYER_HEIGHT_OFFSET,
   CAM_HEIGHT, CAM_DISTANCE, CAM_LOOK_AHEAD, CAM_LOOK_HEIGHT,
+  JUMP_VELOCITY, JUMP_GRAVITY,
+  JUMP_HEAD_PITCH_UP, JUMP_HEAD_PITCH_APEX, JUMP_HEAD_PITCH_FALL, JUMP_HEAD_PITCH_LAND,
+  JUMP_HEAD_PITCH_SMOOTH,
+  JUMP_ROOT_PITCH_PEAK, JUMP_ROOT_PITCH_LAND, JUMP_ROOT_PITCH_SMOOTH,
+  JUMP_HEAD_LEAD_LOCAL_Y, JUMP_HEAD_LEAD_RISE_S, JUMP_HEAD_LEAD_END_S, JUMP_BODY_LIFT_RAMP_S,
+  JUMP_ROOT_PITCH_LAUNCH, JUMP_ROOT_ROLL_MAX, JUMP_AIR_MOVE_DECEL_MULT,
 } from './config';
 import { getEl, clamp, smoothToward } from './utils';
 import { refreshHud } from './hud';
 import { renderer, scene, camera, sun, ground, grid, box, clock } from './scene';
-import { initInput, getInputVector, joystick, keys, manualMouthOpen, consumeAttack } from './input';
+import { initInput, getInputVector, joystick, keys, manualMouthOpen, consumeAttack, consumeJump } from './input';
 import {
   handState, smoothNeckYaw, smoothNeckPitch,
   updateHandTracking, applyHeadTracking,
@@ -23,6 +29,7 @@ import {
 import {
   sampleTerrainHeight, sampleFlatFloorY, sampleMaterial002SinkOffset,
   canMoveOnWorld, loadWorldMap, getFlatWorldY, setFlatWorldY, hasWorldColliders,
+  clampToBoundary,
 } from './world';
 import {
   normalizeCharacterRoot, setupActions, setLocomotionWeights,
@@ -62,6 +69,18 @@ let idleBobOffset = 0;
 let idlePitchOffset = 0;
 let idleRollOffset = 0;
 
+// ─── Jump (FLAT 地形時。ジョイスティックダブルタップ / J) ───
+let jumpInAir = false;
+let jumpVerticalVelocity = 0;
+let landingRecovery = 0;
+let smoothJumpNeckPitch = 0;
+let smoothJumpRootPitch = 0;
+let smoothJumpRootRoll = 0;
+/** 空中にいる時間（秒）。頭リードと体の上昇ランプ用 */
+let jumpElapsed = 0;
+/** 頭ボーンのローカル Y リード（アニメ後に加算） */
+let smoothHeadLeadY = 0;
+
 // ─── Init input ───
 initInput();
 refreshHud();
@@ -89,7 +108,12 @@ function updateCharacter(dt: number) {
   const { ix, iz, len } = getInputVector();
   const inputSpeed = len;
   const targetForward = inputSpeed > 0.001 ? -iz : 0;
-  const accelSpeed = Math.abs(targetForward) > Math.abs(smoothForwardInput) ? MOVE_ACCEL_SMOOTH : MOVE_DECEL_SMOOTH;
+  const decelAir =
+    jumpInAir && Math.abs(targetForward) < Math.abs(smoothForwardInput) - 1e-6
+      ? MOVE_DECEL_SMOOTH * JUMP_AIR_MOVE_DECEL_MULT
+      : MOVE_DECEL_SMOOTH;
+  const accelSpeed =
+    Math.abs(targetForward) > Math.abs(smoothForwardInput) ? MOVE_ACCEL_SMOOTH : decelAir;
   smoothForwardInput = smoothToward(smoothForwardInput, targetForward, dt, accelSpeed);
   smoothMoveSpeed = smoothToward(smoothMoveSpeed, Math.abs(smoothForwardInput), dt, accelSpeed);
   smoothTurnInput = smoothToward(smoothTurnInput, ix, dt, TURN_INPUT_SMOOTH);
@@ -100,29 +124,59 @@ function updateCharacter(dt: number) {
   else if (stretch <= RUN_STRETCH_EXIT) stickRunLatched = false;
   const runNow = (stickRunLatched || keys['ShiftLeft'] || keys['ShiftRight']) && smoothMoveSpeed > 0.06;
   smoothRunBlend = smoothToward(smoothRunBlend, runNow ? 1 : 0, dt, RUN_BLEND_SMOOTH);
-  if (smoothMoveSpeed > 0.56 && smoothRunBlend > 0.45) currentMoveAnimation = 'Run';
-  else if (smoothMoveSpeed > 0.07) currentMoveAnimation = 'Walk';
-  else currentMoveAnimation = 'Idle';
-  if (smoothMouthOpenness > 0.5) currentMoveAnimation = `${currentMoveAnimation}_MouthOpen`;
 
+  if (FLAT_WORLD_MODE && consumeJump() && !jumpInAir) {
+    jumpVerticalVelocity = JUMP_VELOCITY;
+    jumpInAir = true;
+    landingRecovery = 0;
+  }
+
+  if (jumpInAir) {
+    currentMoveAnimation = smoothMouthOpenness > 0.5 ? 'Idle_MouthOpen' : 'Jump';
+  } else if (landingRecovery > 0.01) {
+    currentMoveAnimation = smoothMouthOpenness > 0.5 ? 'Idle_MouthOpen' : 'Idle';
+  } else if (smoothMoveSpeed > 0.56 && smoothRunBlend > 0.45) {
+    currentMoveAnimation = 'Run';
+  } else if (smoothMoveSpeed > 0.07) {
+    currentMoveAnimation = 'Walk';
+  } else {
+    currentMoveAnimation = 'Idle';
+  }
+  if (!jumpInAir && smoothMouthOpenness > 0.5 && !currentMoveAnimation.includes('Mouth')) {
+    currentMoveAnimation = `${currentMoveAnimation}_MouthOpen`;
+  }
+
+  if (smoothMoveSpeed > 0.005 || jumpInAir) {
+    const turnRate = jumpInAir ? 3.2 : 3.5;
+    model.rotation.y -= smoothTurnInput * turnRate * dt;
+  }
   if (smoothMoveSpeed > 0.005) {
     const moveSpeed = 0.15 + (0.23 - 0.15) * smoothRunBlend;
-    const turnRate = 3.5;
-    model.rotation.y -= smoothTurnInput * turnRate * dt;
-
     const yaw = model.rotation.y;
     const fwdX = Math.sin(yaw);
     const fwdZ = Math.cos(yaw);
     const forward = smoothForwardInput;
-    const nextX = model.position.x + fwdX * forward * moveSpeed * dt;
-    const nextZ = model.position.z + fwdZ * forward * moveSpeed * dt;
-    if (canMoveOnWorld(model.position, nextX, nextZ, playerFootOffset)) {
-      model.position.x = nextX;
-      model.position.z = nextZ;
+    const rawNextX = model.position.x + fwdX * forward * moveSpeed * dt;
+    const rawNextZ = model.position.z + fwdZ * forward * moveSpeed * dt;
+    const bounded = clampToBoundary(rawNextX, rawNextZ);
+    if (canMoveOnWorld(model.position, bounded.x, bounded.z, playerFootOffset)) {
+      model.position.x = bounded.x;
+      model.position.z = bounded.z;
     }
   }
 
-  setLocomotionWeights(smoothMoveSpeed, smoothMouthOpenness, smoothRunBlend, actions);
+  let locoSpeed = smoothMoveSpeed;
+  let locoRun = smoothRunBlend;
+  if (jumpInAir) {
+    if (smoothMoveSpeed > 0.07) {
+      locoSpeed = smoothMoveSpeed * 0.88;
+      locoRun = smoothRunBlend * 0.85;
+    } else {
+      locoSpeed = 0.5;
+      locoRun = 0;
+    }
+  }
+  setLocomotionWeights(locoSpeed, smoothMouthOpenness, locoRun, actions);
 
   if (consumeAttack() && actions.Attack) {
     actions.Attack.reset();
@@ -132,11 +186,75 @@ function updateCharacter(dt: number) {
   }
 
   mixer.update(dt);
-  applyHeadTracking(dt, headBone, headBaseQuat);
+  if (jumpInAir) jumpElapsed += dt;
+  else jumpElapsed = 0;
+
+  const headYAfterAnim = headBone ? headBone.position.y : 0;
+
+  const apexH = (JUMP_VELOCITY * JUMP_VELOCITY) / (2 * Math.max(JUMP_GRAVITY, 0.01));
+  let jumpNeckPitchTarget = 0;
+  let jumpRootPitchTarget = 0;
+  let jumpRootRollTarget = 0;
+  if (jumpInAir && model) {
+    const h = Math.max(0, model.position.y - modelBaseY);
+    const u = clamp(apexH > 0.0001 ? h / apexH : 0, 0, 1);
+    const riseBlend = Math.cos(u * Math.PI * 0.5);
+    jumpNeckPitchTarget = JUMP_HEAD_PITCH_UP * riseBlend * (1 - u * 0.4) + JUMP_HEAD_PITCH_APEX * (1 - riseBlend);
+    if (jumpVerticalVelocity < -0.25) {
+      jumpNeckPitchTarget += JUMP_HEAD_PITCH_FALL * Math.min(1, (-jumpVerticalVelocity) / 3.2);
+    }
+    jumpRootPitchTarget = JUMP_ROOT_PITCH_PEAK * riseBlend * (1 - u * 0.5)
+      + JUMP_ROOT_PITCH_LAUNCH * riseBlend * (1 - Math.min(1, u * 1.15));
+    if (jumpVerticalVelocity < -0.4) {
+      jumpRootPitchTarget += -0.02 * Math.min(1, (-jumpVerticalVelocity - 0.4) / 2);
+    }
+    jumpRootRollTarget = JUMP_ROOT_ROLL_MAX * Math.sin(Math.PI * u);
+  } else if (landingRecovery > 0) {
+    jumpNeckPitchTarget = JUMP_HEAD_PITCH_LAND * landingRecovery;
+    jumpRootPitchTarget = JUMP_ROOT_PITCH_LAND * landingRecovery;
+  }
+  smoothJumpNeckPitch = smoothToward(smoothJumpNeckPitch, jumpNeckPitchTarget, dt, JUMP_HEAD_PITCH_SMOOTH);
+  smoothJumpRootPitch = smoothToward(smoothJumpRootPitch, jumpRootPitchTarget, dt, JUMP_ROOT_PITCH_SMOOTH);
+  smoothJumpRootRoll = smoothToward(smoothJumpRootRoll, jumpRootRollTarget, dt, JUMP_ROOT_PITCH_SMOOTH);
+  applyHeadTracking(dt, headBone, headBaseQuat, smoothJumpNeckPitch);
+
+  let headLeadTarget = 0;
+  if (jumpInAir && jumpElapsed < JUMP_HEAD_LEAD_END_S) {
+    if (jumpElapsed <= JUMP_HEAD_LEAD_RISE_S) {
+      const t = jumpElapsed / Math.max(JUMP_HEAD_LEAD_RISE_S, 1e-4);
+      headLeadTarget = JUMP_HEAD_LEAD_LOCAL_Y * Math.sin(t * Math.PI * 0.5);
+    } else {
+      const peak = JUMP_HEAD_LEAD_LOCAL_Y * Math.sin(Math.PI * 0.5);
+      const span = Math.max(JUMP_HEAD_LEAD_END_S - JUMP_HEAD_LEAD_RISE_S, 1e-4);
+      const t = (jumpElapsed - JUMP_HEAD_LEAD_RISE_S) / span;
+      headLeadTarget = peak * (1 - t) * (1 - t);
+    }
+  }
+  smoothHeadLeadY = smoothToward(smoothHeadLeadY, headLeadTarget, dt, 22);
+  if (headBone) {
+    headBone.position.y = headYAfterAnim + smoothHeadLeadY;
+  }
 
   if (FLAT_WORLD_MODE) {
     alignModelToFlatWorld(false);
-    model.position.y = smoothToward(model.position.y, modelBaseY, dt, 18);
+    if (jumpInAir) {
+      jumpVerticalVelocity -= JUMP_GRAVITY * dt;
+      const liftRamp = Math.min(1, jumpElapsed / Math.max(JUMP_BODY_LIFT_RAMP_S, 1e-4));
+      model.position.y += jumpVerticalVelocity * dt * liftRamp;
+
+      if (model.position.y <= modelBaseY) {
+        model.position.y = modelBaseY;
+        jumpVerticalVelocity = 0;
+        jumpInAir = false;
+        landingRecovery = 1;
+        smoothHeadLeadY = 0;
+      }
+    } else {
+      model.position.y = smoothToward(model.position.y, modelBaseY, dt, 18);
+    }
+    if (landingRecovery > 0) {
+      landingRecovery = Math.max(0, landingRecovery - dt * 2.4);
+    }
     box.setFromObject(model);
     const minAllowedY = GROUND_Y + PLAYER_GROUND_CLEARANCE;
     if (box.min.y < minAllowedY) {
@@ -159,7 +277,8 @@ function updateCharacter(dt: number) {
     }
   }
 
-  const idleWeight = clamp((0.12 - smoothMoveSpeed) / 0.12, 0, 1);
+  const swayFactor = jumpInAir ? 0 : (landingRecovery > 0 ? 0.35 + landingRecovery * 0.65 : 1);
+  const idleWeight = clamp((0.12 - smoothMoveSpeed) / 0.12, 0, 1) * swayFactor;
   idleSwayPhase += dt * (IDLE_SWAY_SPEED + idleWeight * 0.6);
   const targetBob = (Math.sin(idleSwayPhase * 2.0) * IDLE_BOB_AMOUNT
     + Math.sin(idleSwayPhase * 4.3) * (IDLE_BOB_AMOUNT * 0.32)) * idleWeight;
@@ -168,9 +287,13 @@ function updateCharacter(dt: number) {
   idleBobOffset = smoothToward(idleBobOffset, targetBob, dt, 8);
   idlePitchOffset = smoothToward(idlePitchOffset, targetPitch, dt, 7);
   idleRollOffset = smoothToward(idleRollOffset, targetRoll, dt, 7);
+  if (jumpInAir) {
+    idlePitchOffset = smoothToward(idlePitchOffset, 0, dt, 14);
+    idleRollOffset = smoothToward(idleRollOffset, 0, dt, 14);
+  }
   model.position.y += idleBobOffset;
-  model.rotation.x = idlePitchOffset;
-  model.rotation.z = idleRollOffset;
+  model.rotation.x = idlePitchOffset + smoothJumpRootPitch;
+  model.rotation.z = idleRollOffset + smoothJumpRootRoll;
 }
 
 // ─── Camera ───

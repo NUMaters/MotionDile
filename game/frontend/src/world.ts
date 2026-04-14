@@ -5,6 +5,9 @@ import {
   GROUND_Y, TERRAIN_MIN_NORMAL_Y, MAX_STEP_UP,
   MATERIAL_002_SINK_OFFSET, PLAYER_COLLISION_RADIUS,
   FLAT_WORLD_MODE,
+  BOUNDARY_WALL_HEIGHT, BOUNDARY_WALL_SEGMENTS,
+  BOUNDARY_MARGIN, BOUNDARY_PILLAR_COUNT, BOUNDARY_GROUND_RING_TUBE,
+  BOUNDARY_RADIUS, BOUNDARY_RADIUS_CLAMP_TO_TERRAIN,
 } from './config';
 
 const WORLD_MAP_OBJ_URL = new URL('./data/tex.obj', import.meta.url).href;
@@ -21,9 +24,118 @@ const vTmpA = new THREE.Vector3();
 const vTmpB = new THREE.Vector3();
 const vDown = new THREE.Vector3(0, -1, 0);
 
+let worldBoundaryRadius = Infinity;
+
 export function getFlatWorldY(): number | null { return flatWorldY; }
 export function setFlatWorldY(y: number | null): void { flatWorldY = y; }
 export function hasWorldColliders(): boolean { return worldColliders.length > 0; }
+export function getWorldBoundaryRadius(): number { return worldBoundaryRadius; }
+
+export function clampToBoundary(x: number, z: number): { x: number; z: number } {
+  if (worldBoundaryRadius === Infinity) return { x, z };
+  const dist = Math.sqrt(x * x + z * z);
+  if (dist <= worldBoundaryRadius) return { x, z };
+  const scale = worldBoundaryRadius / dist;
+  return { x: x * scale, z: z * scale };
+}
+
+function computeGroundRadius(): number {
+  if (!worldWalkables.length) return 1.5;
+  const b = new THREE.Box3();
+  for (const mesh of worldWalkables) b.expandByObject(mesh);
+  const size = b.getSize(new THREE.Vector3());
+  return Math.min(size.x, size.z) / 2;
+}
+
+function createBoundaryWall(targetScene: THREE.Scene, radius: number): void {
+  const h = BOUNDARY_WALL_HEIGHT;
+  const seg = BOUNDARY_WALL_SEGMENTS;
+  const tube = BOUNDARY_GROUND_RING_TUBE;
+
+  // 照明に依存しない明るいバリア（MeshBasic）
+  const wallGeo = new THREE.CylinderGeometry(radius, radius, h, seg, 1, true);
+  const wallMat = new THREE.MeshBasicMaterial({
+    color: 0x33c8ff,
+    transparent: true,
+    opacity: 0.52,
+    side: THREE.DoubleSide,
+    depthWrite: true,
+  });
+  const wall = new THREE.Mesh(wallGeo, wallMat);
+  wall.position.y = GROUND_Y + h / 2;
+  wall.renderOrder = 2;
+  targetScene.add(wall);
+
+  // 内側を少し明るく見せる薄いシェル（エッジが分かりやすい）
+  const innerR = Math.max(radius - 0.04, radius * 0.985);
+  const innerGeo = new THREE.CylinderGeometry(innerR, innerR, h * 0.98, seg, 1, true);
+  const innerMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.14,
+    side: THREE.BackSide,
+    depthWrite: false,
+  });
+  const inner = new THREE.Mesh(innerGeo, innerMat);
+  inner.position.y = GROUND_Y + h / 2;
+  inner.renderOrder = 3;
+  targetScene.add(inner);
+
+  // 地面の太いドーナツ状リング（最も目立つ境界線）
+  const groundTorus = new THREE.TorusGeometry(radius, tube, 12, seg);
+  const groundTorusMat = new THREE.MeshBasicMaterial({
+    color: 0xffee55,
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: true,
+  });
+  const groundRing = new THREE.Mesh(groundTorus, groundTorusMat);
+  groundRing.rotation.x = Math.PI / 2;
+  groundRing.position.y = GROUND_Y + tube + 0.002;
+  groundRing.renderOrder = 2;
+  targetScene.add(groundRing);
+
+  const ringW = 0.045;
+  const ringGeo = new THREE.RingGeometry(radius - ringW, radius + ringW, seg);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0x00e8ff,
+    transparent: true,
+    opacity: 0.75,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = GROUND_Y + 0.006;
+  ring.renderOrder = 2;
+  targetScene.add(ring);
+
+  const topRing = new THREE.Mesh(ringGeo.clone(), ringMat.clone());
+  topRing.rotation.x = -Math.PI / 2;
+  topRing.position.y = GROUND_Y + h;
+  topRing.renderOrder = 2;
+  targetScene.add(topRing);
+
+  const pillarCount = BOUNDARY_PILLAR_COUNT;
+  const pillarH = h + 0.12;
+  const pillarR = 0.024;
+  const pillarGeo = new THREE.CylinderGeometry(pillarR, pillarR, pillarH, 8);
+  const pillarMat = new THREE.MeshBasicMaterial({
+    color: 0xfff8a8,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: true,
+  });
+  for (let i = 0; i < pillarCount; i++) {
+    const angle = (i / pillarCount) * Math.PI * 2;
+    const px = Math.cos(angle) * radius;
+    const pz = Math.sin(angle) * radius;
+    const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+    pillar.position.set(px, GROUND_Y + pillarH / 2, pz);
+    pillar.renderOrder = 2;
+    targetScene.add(pillar);
+  }
+}
 
 function refreshWorldColliders(root: THREE.Group) {
   worldColliders.length = 0;
@@ -194,6 +306,24 @@ export async function loadWorldMap(
     }
     ground.visible = true;
     grid.visible = false;
+
+    const autoRadius = Math.max(0.05, computeGroundRadius() - BOUNDARY_MARGIN);
+    if (BOUNDARY_RADIUS != null && BOUNDARY_RADIUS > 0) {
+      worldBoundaryRadius = BOUNDARY_RADIUS_CLAMP_TO_TERRAIN
+        ? Math.min(BOUNDARY_RADIUS, autoRadius)
+        : Math.max(0.05, BOUNDARY_RADIUS);
+    } else {
+      worldBoundaryRadius = autoRadius;
+    }
+    if (worldBoundaryRadius > 0.1) {
+      createBoundaryWall(targetScene, worldBoundaryRadius);
+      console.log('Boundary wall created, radius:', worldBoundaryRadius, {
+        auto: autoRadius,
+        configured: BOUNDARY_RADIUS,
+        clampToTerrain: BOUNDARY_RADIUS_CLAMP_TO_TERRAIN,
+      });
+    }
+
     console.log('World map loaded:', WORLD_MAP_OBJ_URL);
   } catch (e) {
     console.warn('World map load failed, fallback to default ground.', e);

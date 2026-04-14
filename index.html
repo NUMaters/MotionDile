@@ -52,9 +52,10 @@
     }
     /* ベースより外側の暗いリング＝ここまで指を押し出すと走る */
     #joystick-run-ring {
-      position: absolute; width: 148px; height: 148px; left: 14px; bottom: 14px;
+      position: absolute;
       border-radius: 50%; box-sizing: border-box;
-      border: 16px solid rgba(0, 0, 0, 0.12);
+      border-style: solid;
+      border-color: rgba(0, 0, 0, 0.12);
       pointer-events: none;
       z-index: 0;
       transition: border-color .12s, opacity .12s;
@@ -64,17 +65,15 @@
       opacity: 1;
     }
     #joystick-base {
-      position: absolute; width: 120px; height: 120px; border-radius: 50%;
+      position: absolute; border-radius: 50%;
       background: rgba(255,255,255,.035); border: 2px solid rgba(255,255,255,.08);
-      left: 28px; bottom: 28px;
       transition: opacity .15s;
       z-index: 1;
     }
     #joystick-base.active { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.14); }
     #joystick-thumb {
-      position: absolute; width: 48px; height: 48px; border-radius: 50%;
+      position: absolute; border-radius: 50%;
       background: rgba(255,255,255,.12);
-      left: 64px; bottom: 64px;
       transform: translate(0px, 0px);
       transition: opacity .15s, transform .04s linear;
       z-index: 2;
