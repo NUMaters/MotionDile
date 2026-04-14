@@ -50,7 +50,7 @@ func NewRoomUsecase(repo repository.RoomRepository, agentURL string) *RoomUsecas
 	return &RoomUsecase{
 		repo:     repo,
 		agentURL: agentURL,
-		hc:       &http.Client{Timeout: 10 * time.Second},
+		hc:       &http.Client{Timeout: 6 * time.Second},
 	}
 }
 
@@ -146,6 +146,12 @@ type agentPlayerInfo struct {
 	IsEnemy       bool    `json:"isEnemy"`
 }
 
+type LandmarkInfo struct {
+	Type string  `json:"type"`
+	X    float64 `json:"x"`
+	Z    float64 `json:"z"`
+}
+
 type agentHintRequest struct {
 	RoomID       string            `json:"roomId"`
 	HintNumber   int               `json:"hintNumber"`
@@ -153,13 +159,14 @@ type agentHintRequest struct {
 	ElapsedSec   int               `json:"elapsedSec"`
 	MapRadius    float64           `json:"mapRadius"`
 	Players      []agentPlayerInfo `json:"players"`
+	Landmarks    []LandmarkInfo    `json:"landmarks,omitempty"`
 }
 
 type agentHintResponse struct {
 	Text string `json:"text"`
 }
 
-func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum int) (entity.HintInfo, error) {
+func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum int, landmarks []LandmarkInfo) (entity.HintInfo, error) {
 	snapshot, err := u.repo.GetSnapshot(ctx, roomID)
 	if err != nil {
 		return entity.HintInfo{}, err
@@ -202,6 +209,7 @@ func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum i
 		ElapsedSec:   elapsedSec,
 		MapRadius:    1.3,
 		Players:      players,
+		Landmarks:    landmarks,
 	}
 
 	hint, err := u.callAgentAPI(ctx, reqBody)

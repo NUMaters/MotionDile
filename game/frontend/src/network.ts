@@ -11,8 +11,10 @@ import {
   updateMatchmaking, updateMatchmakingPlayers, startGameHud, showHint,
   startVoting, showResults, setVoteCallback, getPlayerRole,
 } from './screens';
-import { setPlayerDisplayNamesFromSnapshot, setPlayerDisplayName, getJoinDisplayName } from './player-names';
+import { setPlayerDisplayNamesFromSnapshot, setPlayerDisplayName, getJoinDisplayName, resolveDisplayName } from './player-names';
 import { disposeVotePreviews } from './vote-previews';
+import { createNameLabel, autoPositionLabel, updateNameLabelText } from './name-labels';
+import { getWorldLandmarks } from './world';
 
 let gameSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
@@ -153,6 +155,12 @@ function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
   root.rotation.z = player.idleRoll ?? 0;
   scene.add(root);
 
+  const displayName = (player.displayName?.trim()) || resolveDisplayName(player.playerId);
+  const nameLabel = createNameLabel(displayName);
+  root.add(nameLabel);
+  root.updateMatrixWorld(true);
+  autoPositionLabel(nameLabel, root);
+
   const remote: RemotePlayer = {
     root,
     targetPos: new THREE.Vector3(player.x, player.y, player.z),
@@ -177,6 +185,8 @@ function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
     mixer: remoteModel?.mixer ?? null,
     isProxy: !remoteModel,
     color: player.color || '',
+    nameLabel,
+    displayName,
   };
   applyRemoteLocomotion(remote);
   return remote;
@@ -204,6 +214,13 @@ function upgradeRemoteVisualIfReady(remote: RemotePlayer) {
   remote.root.rotation.y = remote.targetYaw;
   remote.root.rotation.x = remote.smoothIdlePitch;
   remote.root.rotation.z = remote.smoothIdleRoll;
+
+  if (remote.nameLabel) {
+    remote.root.add(remote.nameLabel as THREE.Object3D);
+    remote.root.updateMatrixWorld(true);
+    autoPositionLabel(remote.nameLabel as import('three/examples/jsm/renderers/CSS2DRenderer.js').CSS2DObject, remote.root);
+  }
+
   scene.add(remote.root);
   applyRemoteLocomotion(remote);
 }
@@ -216,7 +233,19 @@ function refreshRemoteVisualsAfterModelLoaded() {
 
 function disposeRemotePlayer(remote: RemotePlayer) {
   if (remote.mixer) remote.mixer.stopAllAction();
+  if (remote.nameLabel) {
+    const el = (remote.nameLabel as { element?: HTMLElement }).element;
+    el?.remove();
+  }
   scene.remove(remote.root);
+}
+
+/** 接続切断・HMR 時など、リモートのメッシュと CSS2D ラベルをすべて除去する */
+export function clearRemotePlayers(): void {
+  for (const [id, remote] of remotePlayers) {
+    disposeRemotePlayer(remote);
+    remotePlayers.delete(id);
+  }
 }
 
 function removeRemotePlayer(playerID: string) {
@@ -227,6 +256,8 @@ function removeRemotePlayer(playerID: string) {
 }
 
 function applyRoomSnapshot(snapshot: RoomSnapshot) {
+  setPlayerDisplayNamesFromSnapshot(snapshot.players);
+
   const aliveIDs = new Set<string>();
 
   for (const p of snapshot.players) {
@@ -261,6 +292,11 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
     remote.targetIdleRoll = p.idleRoll ?? 0;
     remote.desiredAnimation = p.animation || 'Idle';
     remote.targetMouthOpenness = p.mouthOpenness ?? 0;
+    const nextName = (p.displayName?.trim()) || resolveDisplayName(p.playerId);
+    if (nextName !== remote.displayName) {
+      remote.displayName = nextName;
+      if (remote.nameLabel) updateNameLabelText(remote.nameLabel as never, nextName);
+    }
     applyRemoteLocomotion(remote);
   }
 
@@ -269,7 +305,6 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
   }
 
   setMultiplayerStatus(`部屋: ${snapshot.roomId} 同期中 ${snapshot.players.length}人`);
-  setPlayerDisplayNamesFromSnapshot(snapshot.players);
 }
 
 export async function joinRoom(): Promise<void> {
@@ -317,6 +352,10 @@ export function connectGameSocket(): void {
 
   ws.addEventListener('open', () => {
     setMultiplayerStatus(`部屋: ${roomId} 接続済み`);
+    const lm = getWorldLandmarks();
+    if (lm.length > 0) {
+      ws.send(JSON.stringify({ type: 'landmarks', payload: { landmarks: lm } }));
+    }
   });
 
   ws.addEventListener('message', (event) => {
@@ -356,6 +395,7 @@ export function connectGameSocket(): void {
       manualWsClose = false;
       return;
     }
+    clearRemotePlayers();
     if (!multiplayerSessionActive) return;
     setMultiplayerStatus(`部屋: ${roomId} 再接続待ち`);
     if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
@@ -428,7 +468,12 @@ function handleVoteResult(payload: Record<string, unknown>): void {
   const citizensWin = (payload.citizensWin as boolean) || false;
   const voteCounts = (payload.voteCounts as Record<string, number>) || {};
   showResults(citizensWin, enemyPlayerId, voteCounts, currentRole);
+  cleanup();
+  if (onGameEndCallback) onGameEndCallback();
 }
+
+let onGameEndCallback: (() => void) | null = null;
+export function setOnGameEnd(cb: () => void): void { onGameEndCallback = cb; }
 
 export function updateRemotePlayers(dt: number): void {
   const lerpT = 1 - Math.exp(-8 * dt);
@@ -482,10 +527,9 @@ export function cleanup(): void {
   manualWsClose = true;
   if (gameSocket) gameSocket.close();
   gameSocket = null;
-  for (const [id, remote] of remotePlayers) {
-    disposeRemotePlayer(remote);
-    remotePlayers.delete(id);
-  }
+  clearRemotePlayers();
+  localPlayerColor = '';
+  localModelTinted = false;
   void leaveRoom();
   setMultiplayerStatus(`部屋: ${roomId} 未参加`);
 }

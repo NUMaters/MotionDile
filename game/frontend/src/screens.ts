@@ -29,7 +29,11 @@ export function showScreen(name: ScreenName): void {
       el.classList.add('hidden');
     }
   }
+  if (name !== 'matchmaking') {
+    setMatchmakingPipMode(false);
+  }
   currentScreen = name;
+  (window as unknown as Record<string, unknown>).__currentScreen = name;
 }
 
 export function getCurrentScreen(): ScreenName {
@@ -148,10 +152,39 @@ export function initTutorial(): void {
 
 // ─── Matchmaking ───
 let matchCountdownInterval: number | null = null;
+let matchmakingPip = false;
+
+/** 待機画面を PiP 風に縮小（背景透過・ゲーム操作可能） */
+export function setMatchmakingPipMode(pip: boolean): void {
+  const root = document.getElementById('screen-matchmaking');
+  const btn = document.getElementById('btn-matchmaking-pip') as HTMLButtonElement | null;
+  const label = document.getElementById('label-matchmaking-pip');
+  const iconSlot = document.getElementById('icon-matchmaking-pip');
+  if (!root) return;
+  matchmakingPip = pip;
+  root.classList.toggle('matchmaking-pip', pip);
+  if (btn) {
+    btn.setAttribute('aria-pressed', pip ? 'true' : 'false');
+    btn.title = pip ? '待機パネルを拡大' : '待機パネルを縮小してワールドを操作';
+  }
+  if (label) label.textContent = pip ? '拡大表示' : '縮小表示';
+  if (iconSlot) iconSlot.innerHTML = pip ? IC.maximize(18) : IC.pip(18);
+}
+
+export function initMatchmakingPip(): void {
+  const btn = document.getElementById('btn-matchmaking-pip');
+  const iconSlot = document.getElementById('icon-matchmaking-pip');
+  if (iconSlot) iconSlot.innerHTML = IC.pip(18);
+  btn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setMatchmakingPipMode(!matchmakingPip);
+  });
+}
 
 export function updateMatchmaking(playerCount: number, countdownEnd: number | null): void {
   const countEl = document.getElementById('match-count');
   const cdEl = document.getElementById('match-countdown');
+  const homeBtn = document.getElementById('btn-matchmaking-home') as HTMLButtonElement | null;
   if (countEl) countEl.textContent = `${playerCount} / 10`;
 
   if (matchCountdownInterval != null) {
@@ -163,6 +196,12 @@ export function updateMatchmaking(playerCount: number, countdownEnd: number | nu
     matchCountdownInterval = window.setInterval(() => {
       const remaining = Math.max(0, Math.ceil((countdownEnd - Date.now()) / 1000));
       cdEl.textContent = remaining > 0 ? `開始まで ${remaining}秒` : '開始中...';
+      if (homeBtn) {
+        const locked = remaining > 0 && remaining <= 10;
+        homeBtn.disabled = locked;
+        homeBtn.style.opacity = locked ? '0.3' : '';
+        homeBtn.style.pointerEvents = locked ? 'none' : '';
+      }
       if (remaining <= 0 && matchCountdownInterval != null) {
         window.clearInterval(matchCountdownInterval);
         matchCountdownInterval = null;
@@ -170,6 +209,11 @@ export function updateMatchmaking(playerCount: number, countdownEnd: number | nu
     }, 200);
   } else if (cdEl) {
     cdEl.textContent = '3人以上で開始カウントダウン';
+    if (homeBtn) {
+      homeBtn.disabled = false;
+      homeBtn.style.opacity = '';
+      homeBtn.style.pointerEvents = '';
+    }
   }
 }
 

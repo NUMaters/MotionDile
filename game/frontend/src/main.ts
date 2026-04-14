@@ -41,12 +41,14 @@ import {
 import {
   initMultiplayer, sendLocalMove, updateRemotePlayers, cleanup as cleanupNetwork,
   setLocalModel, setRemoteModelTemplate, localPlayerColor, isLocalModelTinted,
+  setOnGameEnd, clearRemotePlayers,
 } from './network';
 import {
-  showScreen, initTutorial, updateMatchmaking,
+  showScreen, initTutorial, updateMatchmaking, initMatchmakingPip,
 } from './screens';
 import { getStoredPlayerName, saveStoredPlayerName } from './player-names';
 import { IC } from './icons';
+import { initLabelRenderer, renderLabels } from './name-labels';
 
 // ─── DOM (loading UI) ───
 const loadingEl = getEl<HTMLElement>('loading');
@@ -93,6 +95,9 @@ let smoothHeadLeadY = 0;
 initInput();
 refreshHud();
 
+const gameCanvas = document.getElementById('game-canvas')!;
+initLabelRenderer(gameCanvas.parentElement!);
+
 const lookResetBtn = getEl<HTMLButtonElement>('look-reset-btn');
 function positionLookResetButton(): void {
   lookResetBtn.style.width = `${LOOK_RESET_SIZE_PX}px`;
@@ -108,6 +113,38 @@ lookResetBtn.addEventListener('pointerdown', (e) => {
   e.stopPropagation();
   recenterDeviceLook();
 });
+
+/** ゲーム終了時にキャラ位置・移動状態をリセットし初期位置に戻す */
+function resetLocalPlayer(): void {
+  if (!model) return;
+  model.position.set(0, 0, 0);
+  model.rotation.set(0, 0, 0);
+  smoothForwardInput = 0;
+  smoothMoveSpeed = 0;
+  smoothTurnInput = 0;
+  smoothRunBlend = 0;
+  smoothMouthOpenness = 0;
+  stickRunLatched = false;
+  currentMoveAnimation = 'Idle';
+  idleSwayPhase = 0;
+  idleBobOffset = 0;
+  idlePitchOffset = 0;
+  idleRollOffset = 0;
+  jumpInAir = false;
+  jumpVerticalVelocity = 0;
+  landingRecovery = 0;
+  smoothJumpNeckPitch = 0;
+  smoothJumpRootPitch = 0;
+  smoothJumpRootRoll = 0;
+  jumpElapsed = 0;
+  smoothHeadLeadY = 0;
+  normalizeCharacterRoot(model);
+  box.setFromObject(model);
+  playerFootOffset = Math.max(0.03, model.position.y - box.min.y);
+  modelBaseY = model.position.y;
+  alignModelToFlatWorld(true);
+  recenterDeviceLook();
+}
 
 // ─── Terrain helpers ───
 function alignModelToFlatWorld(forceSnap = false) {
@@ -318,6 +355,22 @@ function updateCharacter(dt: number) {
   model.position.y += idleBobOffset;
   model.rotation.x = idlePitchOffset + smoothJumpRootPitch;
   model.rotation.z = idleRollOffset + smoothJumpRootRoll;
+}
+
+// ─── Compass ───
+const compassEl = document.getElementById('compass');
+const compassNeedle = compassEl?.querySelector('.compass-needle') as SVGGElement | null;
+
+function updateCompass() {
+  if (!model || !compassEl) return;
+  const screen = (window as unknown as { __currentScreen?: string }).__currentScreen;
+  if (screen === 'game-hud') {
+    compassEl.classList.remove('hidden');
+    const deg = -(model.rotation.y * 180 / Math.PI);
+    if (compassNeedle) compassNeedle.style.transform = `rotate(${deg}deg)`;
+  } else {
+    compassEl.classList.add('hidden');
+  }
 }
 
 // ─── Camera ───
@@ -559,6 +612,7 @@ async function loadModel() {
 
 // ─── Bootstrap ───
 initTutorial();
+initMatchmakingPip();
 
 // Lucide アイコンを動的に挿入（HTML上の placeholder span）
 const matchIcon = document.getElementById('match-icon');
@@ -587,13 +641,17 @@ btnJoin.addEventListener('click', () => {
   void initMultiplayer();
 });
 
+setOnGameEnd(resetLocalPlayer);
+
 getEl<HTMLElement>('btn-back-home').addEventListener('click', () => {
   void cleanupNetwork();
+  resetLocalPlayer();
   showScreen('home');
 });
 
 getEl<HTMLElement>('btn-matchmaking-home').addEventListener('click', () => {
   void cleanupNetwork();
+  resetLocalPlayer();
   showScreen('home');
 });
 
@@ -604,6 +662,12 @@ void loadModel();
 window.addEventListener('beforeunload', () => {
   cleanupNetwork();
 });
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    clearRemotePlayers();
+  });
+}
 
 // ─── Game loop ───
 function loop(timestamp: number) {
@@ -633,6 +697,8 @@ function loop(timestamp: number) {
 
   updateRemotePlayers(dt);
   updateCamera();
+  updateCompass();
   renderer.render(scene, camera);
+  renderLabels(scene, camera);
 }
 requestAnimationFrame(loop);

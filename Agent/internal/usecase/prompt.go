@@ -13,7 +13,8 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 
 ## マップ情報
 - 円形のフィールド（島）で、外周にはバリアウォール（青い光る壁）がある
-- マップ内には岩場（stone）がいくつかあり、岩の上に登ることも可能
+- マップ内には岩場（stone）がいくつかあり、岩の上に登ることも可能。岩陰に隠れるプレイヤーもいる
+- マップ内には木（tree）が複数あり、木の陰に隠れることもできる
 - 地面は草地と砂地。マップ中央付近は開けている
 - マップの端に行くほど境界の壁が近い
 
@@ -30,7 +31,7 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 - 方角（北東エリア、南西の端 etc）
 - 行動（走り回っている、じっと立ち止まっている、ジャンプしている、歩き回っている）
 - 口の状態（口を開けている=威嚇的）
-- 場所の特徴（岩の近く、壁際、マップ中央、開けた場所）
+- 場所の特徴（岩の近く・岩陰、木の近く・木の陰、壁際、マップ中央、開けた場所）
 - 他プレイヤーとの距離感（孤立している、群れから離れている、誰かの近くにいる）
 - 移動方向（北に向かっている、境界に向かって走っている）`
 
@@ -61,7 +62,7 @@ func buildUserPrompt(req domain.HintRequest) string {
 	}
 
 	sb.WriteString("【敵ワニの状態】\n")
-	sb.WriteString(formatPlayerFull(enemy, req.MapRadius))
+	sb.WriteString(formatPlayerFull(enemy, req.MapRadius, req.Landmarks))
 	sb.WriteString("\n")
 
 	if len(citizens) > 0 {
@@ -69,7 +70,7 @@ func buildUserPrompt(req domain.HintRequest) string {
 		for i := range citizens {
 			sb.WriteString(fmt.Sprintf("- %s: %s\n",
 				citizens[i].DisplayName,
-				formatBrief(&citizens[i], req.MapRadius),
+				formatBrief(&citizens[i], req.MapRadius, req.Landmarks),
 			))
 		}
 		sb.WriteString("\n")
@@ -90,10 +91,10 @@ func buildUserPrompt(req domain.HintRequest) string {
 	return sb.String()
 }
 
-func formatPlayerFull(p *domain.PlayerInfo, mapRadius float64) string {
+func formatPlayerFull(p *domain.PlayerInfo, mapRadius float64, landmarks []domain.LandmarkInfo) string {
 	zone := positionToZone(p.X, p.Z, mapRadius)
 	movement := animationToLabel(p.Animation)
-	location := locationContext(p.X, p.Y, p.Z, mapRadius)
+	location := locationContext(p.X, p.Z, mapRadius, p.Animation, landmarks)
 	facing := facingDirection(p.RotationY)
 
 	lines := fmt.Sprintf(
@@ -101,8 +102,8 @@ func formatPlayerFull(p *domain.PlayerInfo, mapRadius float64) string {
 		zone, movement, facing, location,
 	)
 
-	if p.Y > 0.15 {
-		lines += "  ※ジャンプ中・高所にいる\n"
+	if animationSuggestsAirborne(p.Animation) {
+		lines += "  ※ジャンプ中（空中にいる可能性）\n"
 	}
 	if p.MouthOpenness > 0.4 {
 		lines += "  ※口を開けている（威嚇的な状態）\n"
@@ -111,15 +112,19 @@ func formatPlayerFull(p *domain.PlayerInfo, mapRadius float64) string {
 	return lines
 }
 
-func formatBrief(p *domain.PlayerInfo, mapRadius float64) string {
+func formatBrief(p *domain.PlayerInfo, mapRadius float64, landmarks []domain.LandmarkInfo) string {
 	zone := positionToZone(p.X, p.Z, mapRadius)
 	movement := animationToLabel(p.Animation)
 	extras := ""
-	if p.Y > 0.15 {
-		extras += " [高所]"
+	if animationSuggestsAirborne(p.Animation) {
+		extras += " [ジャンプ]"
 	}
 	if p.MouthOpenness > 0.4 {
 		extras += " [口開]"
+	}
+	near := nearestLandmark(p.X, p.Z, landmarks, 0.35)
+	if near != "" {
+		extras += " [" + near + "]"
 	}
 	return fmt.Sprintf("%s で %s%s", zone, movement, extras)
 }
@@ -198,7 +203,33 @@ func animationToLabel(anim string) string {
 	}
 }
 
-func locationContext(x, y, z, mapRadius float64) string {
+func animationSuggestsAirborne(anim string) bool {
+	a := strings.ToLower(anim)
+	return strings.Contains(a, "jump")
+}
+
+func nearestLandmark(x, z float64, landmarks []domain.LandmarkInfo, threshold float64) string {
+	bestDist := threshold
+	bestType := ""
+	for _, lm := range landmarks {
+		dx := x - lm.X
+		dz := z - lm.Z
+		d := math.Sqrt(dx*dx + dz*dz)
+		if d < bestDist {
+			bestDist = d
+			bestType = lm.Type
+		}
+	}
+	switch bestType {
+	case "rock":
+		return "岩の近く"
+	case "tree":
+		return "木の近く"
+	}
+	return ""
+}
+
+func locationContext(x, z, mapRadius float64, animation string, landmarks []domain.LandmarkInfo) string {
 	parts := []string{}
 
 	distFromCenter := math.Sqrt(x*x + z*z)
@@ -210,14 +241,17 @@ func locationContext(x, y, z, mapRadius float64) string {
 		parts = append(parts, "マップ中央の開けた場所")
 	}
 
-	if y > 0.15 {
-		parts = append(parts, "高所（岩の上 or ジャンプ中）")
-	} else if y > 0.05 && y <= 0.15 {
-		parts = append(parts, "やや高い位置（岩場付近の可能性）")
+	if animationSuggestsAirborne(animation) {
+		parts = append(parts, "空中（ジャンプ中の可能性）")
+	}
+
+	near := nearestLandmark(x, z, landmarks, 0.35)
+	if near != "" {
+		parts = append(parts, near)
 	}
 
 	if len(parts) == 0 {
-		return "通常の地面"
+		return "通常の地面付近"
 	}
 	return strings.Join(parts, "、")
 }

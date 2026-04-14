@@ -26,6 +26,10 @@ const vDown = new THREE.Vector3(0, -1, 0);
 
 let worldBoundaryRadius = Infinity;
 
+export type Landmark = { type: 'rock' | 'tree'; x: number; z: number };
+let extractedLandmarks: Landmark[] = [];
+export function getWorldLandmarks(): Landmark[] { return extractedLandmarks; }
+
 export function getFlatWorldY(): number | null { return flatWorldY; }
 export function setFlatWorldY(y: number | null): void { flatWorldY = y; }
 export function hasWorldColliders(): boolean { return worldColliders.length > 0; }
@@ -279,6 +283,38 @@ export function canMoveOnWorld(
   return false;
 }
 
+function extractLandmarks(root: THREE.Group): Landmark[] {
+  const groups = new Map<string, { type: 'rock' | 'tree'; positions: THREE.Vector3[] }>();
+  root.traverse((o: THREE.Object3D) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.Material[];
+    const names = mats.map(m => (m?.name || '').toLowerCase()).join(' ');
+    let lmType: 'rock' | 'tree' | null = null;
+    if (/stone/.test(names)) lmType = 'rock';
+    else if (/bark|trunk|crown|leaf|leaves/.test(names)) lmType = 'tree';
+    if (!lmType) return;
+    mesh.updateMatrixWorld(true);
+    const center = new THREE.Vector3();
+    new THREE.Box3().setFromObject(mesh).getCenter(center);
+    const key = `${lmType}_${Math.round(center.x * 20)}_${Math.round(center.z * 20)}`;
+    if (!groups.has(key)) groups.set(key, { type: lmType, positions: [] });
+    groups.get(key)!.positions.push(center);
+  });
+
+  const merged = new Map<string, Landmark>();
+  for (const [, g] of groups) {
+    const avg = new THREE.Vector3();
+    for (const p of g.positions) avg.add(p);
+    avg.divideScalar(g.positions.length);
+    const clusterKey = `${g.type}_${Math.round(avg.x * 5)}_${Math.round(avg.z * 5)}`;
+    if (!merged.has(clusterKey)) {
+      merged.set(clusterKey, { type: g.type, x: +avg.x.toFixed(3), z: +avg.z.toFixed(3) });
+    }
+  }
+  return Array.from(merged.values());
+}
+
 function normalizeWorldMap(object: THREE.Group) {
   const b0 = new THREE.Box3().setFromObject(object);
   const size = b0.getSize(new THREE.Vector3());
@@ -351,6 +387,8 @@ export async function loadWorldMap(
       });
     }
 
+    extractedLandmarks = extractLandmarks(obj);
+    console.log('World landmarks:', extractedLandmarks);
     console.log('World map loaded:', WORLD_MAP_OBJ_URL);
   } catch (e) {
     console.warn('World map load failed, fallback to default ground.', e);

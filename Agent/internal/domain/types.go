@@ -14,14 +14,21 @@ type PlayerInfo struct {
 	IsEnemy       bool    `json:"isEnemy"`
 }
 
+type LandmarkInfo struct {
+	Type string  `json:"type"`
+	X    float64 `json:"x"`
+	Z    float64 `json:"z"`
+}
+
 // ゲームサーバーから受け取るヒント生成リクエスト
 type HintRequest struct {
-	RoomID         string       `json:"roomId"`
-	HintNumber     int          `json:"hintNumber"`
-	GameDuration   int          `json:"gameDuration"`
-	ElapsedSec     int          `json:"elapsedSec"`
-	MapRadius      float64      `json:"mapRadius"`
-	Players        []PlayerInfo `json:"players"`
+	RoomID         string         `json:"roomId"`
+	HintNumber     int            `json:"hintNumber"`
+	GameDuration   int            `json:"gameDuration"`
+	ElapsedSec     int            `json:"elapsedSec"`
+	MapRadius      float64        `json:"mapRadius"`
+	Players        []PlayerInfo   `json:"players"`
+	Landmarks      []LandmarkInfo `json:"landmarks,omitempty"`
 }
 
 // Agent が返すレスポンス

@@ -75,6 +75,8 @@ export type RemotePlayer = {
   mixer: THREE.AnimationMixer | null;
   isProxy: boolean;
   color: string;
+  nameLabel: THREE.Object3D | null;
+  displayName: string;
 };
 
 export type MovePayload = {

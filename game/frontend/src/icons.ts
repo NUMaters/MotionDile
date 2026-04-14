@@ -3,6 +3,7 @@ import type { IconNode } from 'lucide';
 import {
   Gamepad2, Eye, Zap, Swords, Search, Vote,
   ShieldAlert, User, Check, Radio, Trophy, Skull, Users,
+  PictureInPicture2, Maximize2,
 } from 'lucide';
 
 function svg(def: IconNode, size = 20): string {
@@ -24,4 +25,6 @@ export const IC = {
   trophy:      (s = 20) => svg(Trophy, s),
   skull:       (s = 20) => svg(Skull, s),
   users:       (s = 20) => svg(Users, s),
+  pip:         (s = 20) => svg(PictureInPicture2, s),
+  maximize:    (s = 20) => svg(Maximize2, s),
 } as const;

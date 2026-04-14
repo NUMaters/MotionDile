@@ -53,6 +53,16 @@ type votePayload struct {
 	VotedFor string `json:"votedFor"`
 }
 
+type landmarkItem struct {
+	Type string  `json:"type"`
+	X    float64 `json:"x"`
+	Z    float64 `json:"z"`
+}
+
+type landmarksPayload struct {
+	Landmarks []landmarkItem `json:"landmarks"`
+}
+
 type snapshotEnvelope struct {
 	Type    string              `json:"type"`
 	Payload entity.RoomSnapshot `json:"payload"`
@@ -83,9 +93,12 @@ type Gateway struct {
 
 	gameMu   sync.Mutex
 	gameCtxs map[string]*roomGameCtx
+
+	landmarksMu sync.RWMutex
+	landmarks   map[string][]usecase.LandmarkInfo
 }
 
-func NewGateway(usecase *usecase.RoomUsecase) *Gateway {
+func NewGateway(uc *usecase.RoomUsecase) *Gateway {
 	return &Gateway{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -94,9 +107,10 @@ func NewGateway(usecase *usecase.RoomUsecase) *Gateway {
 				return true
 			},
 		},
-		usecase:  usecase,
-		rooms:    make(map[string]map[*Client]struct{}),
-		gameCtxs: make(map[string]*roomGameCtx),
+		usecase:   uc,
+		rooms:     make(map[string]map[*Client]struct{}),
+		gameCtxs:  make(map[string]*roomGameCtx),
+		landmarks: make(map[string][]usecase.LandmarkInfo),
 	}
 }
 
@@ -171,6 +185,8 @@ func (g *Gateway) readPump(client *Client) {
 			g.handleMove(client, msg.Payload)
 		case "vote":
 			g.handleVote(client, msg.Payload)
+		case "landmarks":
+			g.handleLandmarks(client, msg.Payload)
 		}
 	}
 }
@@ -222,6 +238,26 @@ func (g *Gateway) handleVote(client *Client, raw json.RawMessage) {
 	if len(gs.Votes) >= len(playerIDs) {
 		go g.finishVoting(client.roomID)
 	}
+}
+
+func (g *Gateway) handleLandmarks(client *Client, raw json.RawMessage) {
+	var lp landmarksPayload
+	if err := json.Unmarshal(raw, &lp); err != nil {
+		return
+	}
+	items := make([]usecase.LandmarkInfo, 0, len(lp.Landmarks))
+	for _, l := range lp.Landmarks {
+		items = append(items, usecase.LandmarkInfo{Type: l.Type, X: l.X, Z: l.Z})
+	}
+	g.landmarksMu.Lock()
+	g.landmarks[client.roomID] = items
+	g.landmarksMu.Unlock()
+}
+
+func (g *Gateway) getRoomLandmarks(roomID string) []usecase.LandmarkInfo {
+	g.landmarksMu.RLock()
+	defer g.landmarksMu.RUnlock()
+	return g.landmarks[roomID]
 }
 
 func (g *Gateway) writePump(client *Client) {
@@ -442,8 +478,12 @@ func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
 		select {
 		case <-hintTicker.C:
 			hintNum++
-			hint, err := g.usecase.GenerateHint(context.Background(), roomID, hintNum)
-			if err == nil {
+			log.Printf("[ws] generating hint #%d for room %s", hintNum, roomID)
+			hint, err := g.usecase.GenerateHint(context.Background(), roomID, hintNum, g.getRoomLandmarks(roomID))
+			if err != nil {
+				log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
+			} else {
+				log.Printf("[ws] broadcasting hint #%d to room %s: %s", hintNum, roomID, hint.Text)
 				g.broadcastToRoom(roomID, genericEnvelope{Type: "hint", Payload: hint})
 			}
 		case <-gameTimer.C:
