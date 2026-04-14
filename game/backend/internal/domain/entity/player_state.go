@@ -1,15 +1,17 @@
 package entity
 
 type PlayerState struct {
-	PlayerID  string  `json:"playerId"`
-	X         float64 `json:"x"`
+	PlayerID    string  `json:"playerId"`
+	DisplayName string  `json:"displayName"`
+	X           float64 `json:"x"`
 	Y         float64 `json:"y"`
 	Z         float64 `json:"z"`
 	RotationY float64 `json:"rotationY"`
 	NeckYaw   float64 `json:"neckYaw"`
 	NeckPitch float64 `json:"neckPitch"`
-	Animation string  `json:"animation"`
-	Color     string  `json:"color"`
+	Animation     string  `json:"animation"`
+	MouthOpenness float64 `json:"mouthOpenness"`
+	Color         string  `json:"color"`
 	IdleBob   float64 `json:"idleBob"`
 	IdlePitch float64 `json:"idlePitch"`
 	IdleRoll  float64 `json:"idleRoll"`

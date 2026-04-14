@@ -86,7 +86,7 @@ export const DEVICE_LOOK_SMOOTH = 11;
 /** 視点リセット中、正面へ戻すスムージング（通常より強め） */
 export const DEVICE_LOOK_RECENTER_SMOOTH = 17;
 /** 視点リセット時、センサーを無視してターゲット0へ寄せる時間（秒）。終了後に再キャリブレーション */
-export const DEVICE_LOOK_RECENTER_DURATION_S = 2;
+export const DEVICE_LOOK_RECENTER_DURATION_S = 0.2;
 /**
  * iOS 相対向きで alpha が null のとき、`beta`/`gamma` の差分から視点へ変換するゲイン（度→ラジアン換算後に乗算）
  */

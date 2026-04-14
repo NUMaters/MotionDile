@@ -42,6 +42,11 @@ import {
   initMultiplayer, sendLocalMove, updateRemotePlayers, cleanup as cleanupNetwork,
   setLocalModel, setRemoteModelTemplate, localPlayerColor, isLocalModelTinted,
 } from './network';
+import {
+  showScreen, initTutorial, updateMatchmaking,
+} from './screens';
+import { getStoredPlayerName, saveStoredPlayerName } from './player-names';
+import { IC } from './icons';
 
 // ─── DOM (loading UI) ───
 const loadingEl = getEl<HTMLElement>('loading');
@@ -385,7 +390,7 @@ function hideLoading() {
   window.clearTimeout(loadSlowTimer);
   loadingEl.classList.add('hidden');
   setTimeout(() => { loadingEl.style.display = 'none'; }, 500);
-  showTapToStart();
+  showScreen('home');
 }
 
 function showLoadError(msg: string) {
@@ -553,7 +558,45 @@ async function loadModel() {
 }
 
 // ─── Bootstrap ───
-void initMultiplayer();
+initTutorial();
+
+// Lucide アイコンを動的に挿入（HTML上の placeholder span）
+const matchIcon = document.getElementById('match-icon');
+if (matchIcon) matchIcon.innerHTML = IC.users(48);
+const hintIcon = document.getElementById('hint-icon');
+if (hintIcon) hintIcon.innerHTML = IC.radio(16);
+const votingIcon = document.getElementById('voting-icon');
+if (votingIcon) votingIcon.innerHTML = IC.vote(24);
+
+const playerNameInput = getEl<HTMLInputElement>('player-name-input');
+const btnJoin = getEl<HTMLButtonElement>('btn-join');
+playerNameInput.value = getStoredPlayerName();
+
+function syncJoinBtn(): void {
+  btnJoin.disabled = !playerNameInput.value.trim();
+}
+syncJoinBtn();
+playerNameInput.addEventListener('input', syncJoinBtn);
+
+btnJoin.addEventListener('click', () => {
+  if (!playerNameInput.value.trim()) return;
+  saveStoredPlayerName(playerNameInput.value);
+  showScreen('matchmaking');
+  updateMatchmaking(1, null);
+  showTapToStart();
+  void initMultiplayer();
+});
+
+getEl<HTMLElement>('btn-back-home').addEventListener('click', () => {
+  void cleanupNetwork();
+  showScreen('home');
+});
+
+getEl<HTMLElement>('btn-matchmaking-home').addEventListener('click', () => {
+  void cleanupNetwork();
+  showScreen('home');
+});
+
 void loadWorldMap(scene, ground, grid);
 void loadHandControlModel();
 void loadModel();
@@ -580,6 +623,7 @@ function loop(timestamp: number) {
       neckYaw: smoothNeckYaw,
       neckPitch: smoothNeckPitch,
       animation: currentMoveAnimation,
+      mouthOpenness: smoothMouthOpenness,
       idleBob: idleBobOffset,
       idlePitch: idlePitchOffset,
       idleRoll: idleRollOffset,

@@ -16,7 +16,9 @@ import (
 
 func main() {
 	repo := memory.NewRoomRepository()
-	roomUsecase := usecase.NewRoomUsecase(repo)
+	agentURL := getenv("AGENT_URL", "http://127.0.0.1:8091")
+	roomUsecase := usecase.NewRoomUsecase(repo, agentURL)
+	log.Printf("[game-backend] agent URL: %s", agentURL)
 	roomHandler := httpif.NewRoomHandler(roomUsecase)
 	wsGateway := ws.NewGateway(roomUsecase)
 

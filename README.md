@@ -32,6 +32,8 @@
 | スマホ: 端末を傾ける | 三人称視点をその方向へ（ジャイロ。`DEVICE_LOOK_*`） |
 | スクロール | ズーム |
 
+ホーム画面は **タイトル〜遊び方〜名前〜参加ボタン**を `.home-stack` でまとめ、**画面内で縦横中央寄せ**しています。遊び方パネルは外寸 **幅100%（最大360px）×高さ280px**で固定し、文章が長いときは **本文エリアだけ**が縦スクロールします。ルール説明などのテキストは **枠内で中央寄せ**（`.tut-page-inner` の flex＋上下スペーサー疑似要素）です。`tutorialPagesHtml` の各ページを表示し、**枠をタップするたびに次のページへ**進みます（`screens.ts` の `initTutorial` / `#home-tut-inline`）。**ゲーム参加**後の待機画面（`#screen-matchmaking`）には **ホームに戻る** ボタンがあり、接続を切ってホームに戻れます。
+
 スマホのゲーム画面（`npm run dev` のトップ）では、左端寄り・**画面の縦方向ほぼ中央**の丸い**目**アイコンで、視点を滑らかに正面へ戻したうえで端末の傾き基準を取り直せます（`DEVICE_LOOK_RECENTER_*` / `LOOK_RESET_*`、`device-look.ts`）。左ジョイスティックで**指を内側の円より外へ押し出す**（外側の暗いリング方向）と走行。`rawDist / R` が **1.06 超で入り・1.01 以下で戻り**のヒステリシス。専用の「走る」ボタンはありません。**画面のどこでも短く素早く2回タップ**（ドラグしない）でジャンプ（フラット地形モード時）。PC では `Space` でジャンプできます。PC では引き続き `Shift` で走行できます。ワールド地面は碁盤風（木目調プレーン + `GridHelper`、`divisions=42` で目を細かく）です。
 
 ### ハンドトラッキング（初回タップで起動）
@@ -57,10 +59,12 @@
 - **TypeScript v5.8** — ゲーム本体（`game/frontend/src/main.ts`）と学習スクリプト（`medea-pipeline/scripts/train-hand-control-model.ts`）の型付け
 - **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
 - **Go + Gin** — `game/backend` の REST API（ルーム参加/退出/スナップショット）
-- **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含め、他クライアントでも呼吸表現を再現
+- **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含め、他クライアントでも呼吸表現を再現。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う
+- **Agent Server (Go + OpenAI gpt-4o-mini)** — `agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
+- **表示名・投票UI** — 参加時に `displayName` を REST / WebSocket クエリで送信し、`PlayerState` に保存。投票カードは iOS 等での複数 WebGL コンテキスト不具合を避けるため、**単一の `WebGLRenderer` で各プレイヤー分を順にレンダリングし JPEG 化して `<img>` に表示**（`vote-previews.ts`）。モデル未読込時は色＋絵文字フォールバック
 - **Vite v6.2** — 開発サーバー・ビルドツール（`.ts` をそのままトランスパイル）
 - **serve** — 静的 HTTP サーバー（ビューア配信）
-- **`game/frontend/src/config.ts`** — ゲーム定数の集約。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_FEATURE_EMA_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker **float32** と検出・追跡しきい値の調整）
+- **`game/frontend/src/config.ts`** — ゲーム定数の集約。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_FEATURE_EMA_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker 公式 **float16** `.task` と WASM／GPU・CPU フォールバック、検出しきい値は任意）
 
 ### 3D モデルパイプライン
 
@@ -190,6 +194,15 @@ WaniAR/
 │   ├── scripts/
 │   │   └── build-wani-game-model.mjs  ← モデル生成パイプライン
 │   └── Meshy_AI_…_fbx/       ← 参考用 FBX + テクスチャ
+├── agent/                     ← AIヒント生成マイクロサービス（Go + OpenAI）
+│   ├── cmd/server/main.go     ← エントリポイント
+│   ├── internal/
+│   │   ├── config/            ← .env 読み込み・設定管理
+│   │   ├── domain/            ← リクエスト/レスポンス型定義
+│   │   ├── infrastructure/openai/ ← OpenAI APIクライアント
+│   │   ├── interface/http/    ← HTTPハンドラ (POST /hint)
+│   │   └── usecase/           ← プロンプト構築・ヒント生成ロジック
+│   └── .env                   ← OPENAI_API_KEY
 ├── medea-pipeline/            ← 右手操作学習パイプライン
 │   ├── collect.html           ← 学習データ収集UI
 │   ├── backend/

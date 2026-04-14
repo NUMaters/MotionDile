@@ -4,11 +4,22 @@ import type { NetPlayerState, RoomSnapshot, RemotePlayer, MovePayload, WsMessage
 import { GAME_API_BASE, GAME_WS_BASE, roomId, CLIP_NAMES, MOVE_SEND_INTERVAL } from './config';
 import { smoothToward } from './utils';
 import { scene } from './scene';
-import { tintModel } from './character';
+import { tintModel, setLocomotionWeights } from './character';
 import { setMultiplayerStatus } from './hud';
+import {
+  showScreen, getCurrentScreen,
+  updateMatchmaking, updateMatchmakingPlayers, startGameHud, showHint,
+  startVoting, showResults, setVoteCallback, getPlayerRole,
+} from './screens';
+import { setPlayerDisplayNamesFromSnapshot, setPlayerDisplayName, getJoinDisplayName } from './player-names';
+import { disposeVotePreviews } from './vote-previews';
 
 let gameSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
+/** `cleanup()` 等で閉じたときは `close` イベントで自動再接続しない（未参加のままゲームが進むのを防ぐ） */
+let manualWsClose = false;
+/** 「ゲーム参加」から `leaveRoom`／切断まで true。未参加時は WS メッセージを無視 */
+let multiplayerSessionActive = false;
 let lastMoveSentAt = 0;
 const remotePlayers = new Map<string, RemotePlayer>();
 
@@ -43,6 +54,12 @@ export function setRemoteModelTemplate(template: THREE.Group, clips: THREE.Anima
   remoteModelTemplate = template;
   remoteAnimationClips = clips;
   refreshRemoteVisualsAfterModelLoaded();
+}
+
+/** 投票画面のワニプレビュー用（モデル読み込み後のみ有効） */
+export function getVotePreviewModel(): { template: THREE.Group; clips: THREE.AnimationClip[] } | null {
+  if (!remoteModelTemplate) return null;
+  return { template: remoteModelTemplate, clips: remoteAnimationClips };
 }
 
 function isValidSnapshot(payload: unknown): payload is RoomSnapshot {
@@ -109,14 +126,17 @@ function getRemoteHead(root: THREE.Group): { headBone: THREE.Object3D | null; he
   };
 }
 
-function setRemoteAnimation(remote: RemotePlayer, name: string) {
+function animToLocoParams(name: string): { speed: number; runBlend: number } {
+  const base = name.replace('_MouthOpen', '');
+  if (base.startsWith('Run')) return { speed: 1, runBlend: 1 };
+  if (base.startsWith('Walk')) return { speed: 0.5, runBlend: 0 };
+  return { speed: 0, runBlend: 0 };
+}
+
+function applyRemoteLocomotion(remote: RemotePlayer) {
   if (!remote.mixer) return;
-  const wanted = remote.actions[name] ? name : (name.startsWith('Run') ? 'Run' : name.startsWith('Walk') ? 'Walk' : 'Idle');
-  for (const n of CLIP_NAMES) {
-    const a = remote.actions[n];
-    if (!a) continue;
-    a.setEffectiveWeight(n === wanted ? 1 : 0);
-  }
+  const { speed, runBlend } = animToLocoParams(remote.desiredAnimation);
+  setLocomotionWeights(speed, remote.smoothMouthOpenness, runBlend, remote.actions);
 }
 
 function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
@@ -151,12 +171,14 @@ function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
     headBone: remoteHead.headBone,
     headBaseQuat: remoteHead.headBaseQuat,
     desiredAnimation: player.animation || 'Idle',
+    targetMouthOpenness: player.mouthOpenness ?? 0,
+    smoothMouthOpenness: player.mouthOpenness ?? 0,
     actions: remoteModel?.actions ?? {},
     mixer: remoteModel?.mixer ?? null,
     isProxy: !remoteModel,
     color: player.color || '',
   };
-  setRemoteAnimation(remote, remote.desiredAnimation);
+  applyRemoteLocomotion(remote);
   return remote;
 }
 
@@ -183,7 +205,7 @@ function upgradeRemoteVisualIfReady(remote: RemotePlayer) {
   remote.root.rotation.x = remote.smoothIdlePitch;
   remote.root.rotation.z = remote.smoothIdleRoll;
   scene.add(remote.root);
-  setRemoteAnimation(remote, remote.desiredAnimation);
+  applyRemoteLocomotion(remote);
 }
 
 function refreshRemoteVisualsAfterModelLoaded() {
@@ -238,7 +260,8 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
     remote.targetIdlePitch = p.idlePitch ?? 0;
     remote.targetIdleRoll = p.idleRoll ?? 0;
     remote.desiredAnimation = p.animation || 'Idle';
-    setRemoteAnimation(remote, remote.desiredAnimation);
+    remote.targetMouthOpenness = p.mouthOpenness ?? 0;
+    applyRemoteLocomotion(remote);
   }
 
   for (const id of remotePlayers.keys()) {
@@ -246,13 +269,14 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
   }
 
   setMultiplayerStatus(`部屋: ${snapshot.roomId} 同期中 ${snapshot.players.length}人`);
+  setPlayerDisplayNamesFromSnapshot(snapshot.players);
 }
 
 export async function joinRoom(): Promise<void> {
   const res = await fetch(`${GAME_API_BASE}/rooms/${encodeURIComponent(roomId)}/players`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId }),
+    body: JSON.stringify({ playerId, displayName: getJoinDisplayName() }),
   });
   if (!res.ok) throw new Error(`join failed: HTTP ${res.status}`);
   const payload = await res.json() as { snapshot?: unknown };
@@ -286,7 +310,7 @@ export function connectGameSocket(): void {
     return;
   }
 
-  const url = `${GAME_WS_BASE}?roomId=${encodeURIComponent(roomId)}&playerId=${encodeURIComponent(playerId)}`;
+  const url = `${GAME_WS_BASE}?roomId=${encodeURIComponent(roomId)}&playerId=${encodeURIComponent(playerId)}&displayName=${encodeURIComponent(getJoinDisplayName())}`;
   setMultiplayerStatus(`部屋: ${roomId} 接続中`);
   const ws = new WebSocket(url);
   gameSocket = ws;
@@ -296,12 +320,30 @@ export function connectGameSocket(): void {
   });
 
   ws.addEventListener('message', (event) => {
+    if (!multiplayerSessionActive) return;
     try {
       const msg: unknown = JSON.parse(event.data as string);
       if (!msg || typeof msg !== 'object') return;
       const envelope = msg as WsMessage;
-      if (envelope.type === 'snapshot' && isValidSnapshot(envelope.payload)) {
-        applyRoomSnapshot(envelope.payload);
+      switch (envelope.type) {
+        case 'snapshot':
+          if (isValidSnapshot(envelope.payload)) applyRoomSnapshot(envelope.payload);
+          break;
+        case 'game_state':
+          handleGameState(envelope.payload as Record<string, unknown>);
+          break;
+        case 'game_start':
+          handleGameStart(envelope.payload as Record<string, unknown>);
+          break;
+        case 'hint':
+          handleHint(envelope.payload as Record<string, unknown>);
+          break;
+        case 'vote_start':
+          handleVoteStart(envelope.payload as Record<string, unknown>);
+          break;
+        case 'vote_result':
+          handleVoteResult(envelope.payload as Record<string, unknown>);
+          break;
       }
     } catch (err) {
       console.warn('WS parse error:', err);
@@ -310,6 +352,11 @@ export function connectGameSocket(): void {
 
   ws.addEventListener('close', () => {
     gameSocket = null;
+    if (manualWsClose) {
+      manualWsClose = false;
+      return;
+    }
+    if (!multiplayerSessionActive) return;
     setMultiplayerStatus(`部屋: ${roomId} 再接続待ち`);
     if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
     wsReconnectTimer = window.setTimeout(() => {
@@ -329,6 +376,60 @@ export function sendLocalMove(now: number, payload: MovePayload): void {
   gameSocket.send(JSON.stringify({ type: 'move', payload }));
 }
 
+function sendVote(votedFor: string): void {
+  if (!gameSocket || gameSocket.readyState !== WebSocket.OPEN) return;
+  gameSocket.send(JSON.stringify({ type: 'vote', payload: { votedFor } }));
+}
+
+let currentRole = 'citizen';
+
+function handleGameState(payload: Record<string, unknown>): void {
+  const phase = payload.phase as string || 'waiting';
+  const playerCount = (payload.playerCount as number) || 0;
+  const countdownEnd = (payload.countdownEnd as number) || 0;
+  const players = (payload.players as { displayName: string; color: string }[]) || [];
+
+  if (phase === 'waiting' || phase === 'countdown') {
+    const screen = getCurrentScreen();
+    if (screen === 'matchmaking') {
+      updateMatchmaking(playerCount, countdownEnd || null);
+      if (players.length) updateMatchmakingPlayers(players);
+    }
+    if (phase === 'waiting' && (screen === 'results' || screen === 'voting' || screen === 'game-hud')) {
+      showScreen('home');
+    }
+  }
+}
+
+function handleGameStart(payload: Record<string, unknown>): void {
+  const gameEnd = (payload.gameEnd as number) || Date.now() + 30000;
+  const role = (payload.role as string) || 'citizen';
+  currentRole = role;
+  startGameHud(gameEnd, role);
+}
+
+function handleHint(payload: Record<string, unknown>): void {
+  const text = (payload.text as string) || 'Agent: 情報を収集中...';
+  showHint(text);
+}
+
+function handleVoteStart(payload: Record<string, unknown>): void {
+  const voteEnd = (payload.voteEnd as number) || Date.now() + 20000;
+  const players = (payload.players as { playerId: string; color: string; displayName?: string }[]) || [];
+  for (const pl of players) {
+    if (pl.displayName) setPlayerDisplayName(pl.playerId, pl.displayName);
+  }
+  startVoting(voteEnd, players, playerId, getVotePreviewModel());
+  setVoteCallback(sendVote);
+}
+
+function handleVoteResult(payload: Record<string, unknown>): void {
+  const enemyPlayerId = (payload.enemyPlayerId as string) || '';
+  const citizensWin = (payload.citizensWin as boolean) || false;
+  const voteCounts = (payload.voteCounts as Record<string, number>) || {};
+  showResults(citizensWin, enemyPlayerId, voteCounts, currentRole);
+}
+
 export function updateRemotePlayers(dt: number): void {
   const lerpT = 1 - Math.exp(-8 * dt);
   for (const remote of remotePlayers.values()) {
@@ -344,6 +445,9 @@ export function updateRemotePlayers(dt: number): void {
     remote.root.rotation.x = remote.smoothIdlePitch;
     remote.root.rotation.z = remote.smoothIdleRoll;
 
+    remote.smoothMouthOpenness = smoothToward(remote.smoothMouthOpenness, remote.targetMouthOpenness, dt, 10);
+    applyRemoteLocomotion(remote);
+
     if (remote.headBone && remote.headBaseQuat) {
       remote.smoothNeckYaw = smoothToward(remote.smoothNeckYaw, remote.targetNeckYaw, dt, 10);
       remote.smoothNeckPitch = smoothToward(remote.smoothNeckPitch, remote.targetNeckPitch, dt, 10);
@@ -358,17 +462,30 @@ export function updateRemotePlayers(dt: number): void {
 
 export async function initMultiplayer(): Promise<void> {
   setMultiplayerStatus(`部屋: ${roomId} 接続準備中`);
+  manualWsClose = false;
   try {
     await joinRoom();
+    multiplayerSessionActive = true;
     connectGameSocket();
   } catch (err) {
+    multiplayerSessionActive = false;
     setMultiplayerStatus(`部屋: ${roomId} 参加失敗`);
     console.error(err);
   }
 }
 
 export function cleanup(): void {
+  multiplayerSessionActive = false;
+  disposeVotePreviews();
   if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
+  wsReconnectTimer = null;
+  manualWsClose = true;
   if (gameSocket) gameSocket.close();
+  gameSocket = null;
+  for (const [id, remote] of remotePlayers) {
+    disposeRemotePlayer(remote);
+    remotePlayers.delete(id);
+  }
   void leaveRoom();
+  setMultiplayerStatus(`部屋: ${roomId} 未参加`);
 }

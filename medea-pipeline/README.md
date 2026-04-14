@@ -10,7 +10,7 @@
 
 ## 構成
 
-- `collect.html`: 収集UI（日本語）。右手を映してサンプルを記録
+- `collect.html`: 収集UI（日本語）。手検出バッジ・大きな口ラベルボタン・キーボードショートカット（O/G/Enter/Backspace）・取り消し・トースト通知。Vite は `/medea-pipeline/collect.html` で配信（`vite.config.js` の `medeaPipelineStatic`）
 - `backend/cmd/server/main.go`: 学習データ保存 + 学習実行 API（Go）
 - `scripts/train-hand-control-model.ts`: 学習スクリプト（TypeScript、`npx tsx` で実行）
 - `data/`: 収集した学習データ
@@ -24,7 +24,7 @@
    - 手の開閉ラベル（開く/閉じる）を記録
    - **向きラベリングスティック**で yaw/pitch を指定して首傾きサンプルを記録
 3. JSON を出力
-   - 「JSON出力（前回分に追加）」で、既存データ + 今回データをマージした JSON を作成
+   - 「JSON 出力 & 自動学習」で、既存データ + 今回データをマージした JSON を作成
    - 出力後に `POST /api/pipeline/train`（Go backend）を呼び、**自動で学習**して `public/models/hand-control-model.json` へ反映
    - ブラウザの `localStorage` にも保存され、次回アクセス時に自動復元
 4. 学習実行

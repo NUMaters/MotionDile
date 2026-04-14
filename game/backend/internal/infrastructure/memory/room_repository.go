@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"math/rand"
+	"strings"
 	"sync"
 
 	"waniar/game-backend/internal/domain/entity"
@@ -10,6 +12,7 @@ import (
 type roomState struct {
 	version int64
 	players map[string]entity.PlayerState
+	game    entity.GameState
 }
 
 type RoomRepository struct {
@@ -31,8 +34,14 @@ func (r *RoomRepository) Join(_ context.Context, roomID string, initial entity.P
 
 	if existing, ok := room.players[initial.PlayerID]; ok {
 		initial.Color = existing.Color
+		if strings.TrimSpace(initial.DisplayName) == "" {
+			initial.DisplayName = existing.DisplayName
+		}
 	} else {
 		initial.Color = pickUnusedColor(room)
+		if strings.TrimSpace(initial.DisplayName) == "" {
+			initial.DisplayName = "プレイヤー"
+		}
 	}
 
 	room.players[initial.PlayerID] = initial
@@ -60,6 +69,7 @@ func (r *RoomRepository) UpsertState(_ context.Context, roomID string, state ent
 	room := r.ensureRoom(roomID)
 	if existing, ok := room.players[state.PlayerID]; ok {
 		state.Color = existing.Color
+		state.DisplayName = existing.DisplayName
 	}
 	room.players[state.PlayerID] = state
 	room.version++
@@ -100,6 +110,67 @@ func (r *RoomRepository) ensureRoom(roomID string) *roomState {
 	}
 	r.rooms[roomID] = rm
 	return rm
+}
+
+func (r *RoomRepository) GetGameState(_ context.Context, roomID string) (entity.GameState, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	room, ok := r.rooms[roomID]
+	if !ok {
+		return entity.GameState{Phase: entity.PhaseWaiting}, nil
+	}
+	gs := room.game
+	gs.PlayerCount = len(room.players)
+	return gs, nil
+}
+
+func (r *RoomRepository) SetGameState(_ context.Context, roomID string, gs entity.GameState) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room := r.ensureRoom(roomID)
+	room.game = gs
+	return nil
+}
+
+func (r *RoomRepository) PickEnemy(_ context.Context, roomID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room := r.ensureRoom(roomID)
+	ids := make([]string, 0, len(room.players))
+	for id := range room.players {
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return "", nil
+	}
+	return ids[rand.Intn(len(ids))], nil
+}
+
+func (r *RoomRepository) CastVote(_ context.Context, roomID, voterID, votedForID string) (entity.GameState, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room := r.ensureRoom(roomID)
+	if room.game.Votes == nil {
+		room.game.Votes = make(map[string]string)
+	}
+	room.game.Votes[voterID] = votedForID
+	gs := room.game
+	gs.PlayerCount = len(room.players)
+	return gs, nil
+}
+
+func (r *RoomRepository) GetPlayerIDs(_ context.Context, roomID string) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	room, ok := r.rooms[roomID]
+	if !ok {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(room.players))
+	for id := range room.players {
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func snapshotFromRoom(roomID string, room *roomState) entity.RoomSnapshot {

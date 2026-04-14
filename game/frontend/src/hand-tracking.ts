@@ -44,8 +44,14 @@ let emaPitch = 0;
 let emaExt = 1.35;
 let hadHandPrevFrame = false;
 
-const HAND_MODEL_FLOAT32 =
-  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float32/latest/hand_landmarker.task';
+/**
+ * Hand Landmarker の .task（公式は float16 のみ配信。float32/latest は 404 になる）
+ * @see https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
+ */
+const HAND_LANDMARKER_MODEL_URLS = [
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+] as const;
 
 async function openCameraStreamPreferRear(): Promise<MediaStream> {
   const tries = [
@@ -80,6 +86,22 @@ async function initHandLandmarkerWithFallback(): Promise<HandLandmarker> {
   const delegates = ['GPU', 'CPU'] as const;
   let lastErr: unknown = null;
 
+  const baseOptionsVariants: {
+    modelAssetPath: string;
+    minHandDetectionConfidence?: number;
+    minHandPresenceConfidence?: number;
+    minTrackingConfidence?: number;
+  }[] = [];
+  for (const url of HAND_LANDMARKER_MODEL_URLS) {
+    baseOptionsVariants.push({
+      modelAssetPath: url,
+      minHandDetectionConfidence: 0.55,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.65,
+    });
+    baseOptionsVariants.push({ modelAssetPath: url });
+  }
+
   for (const wasmRoot of wasmRoots) {
     let vision;
     try {
@@ -89,22 +111,30 @@ async function initHandLandmarkerWithFallback(): Promise<HandLandmarker> {
       continue;
     }
     for (const delegate of delegates) {
-      try {
-        const lm = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: HAND_MODEL_FLOAT32,
-            delegate,
-          },
-          numHands: 1,
-          runningMode: 'VIDEO',
-          minHandDetectionConfidence: 0.55,
-          minHandPresenceConfidence: 0.5,
-          minTrackingConfidence: 0.65,
-        });
-        console.log(`HandLandmarker initialized: wasm=${wasmRoot}, delegate=${delegate}`);
-        return lm;
-      } catch (e) {
-        lastErr = e;
+      for (const bo of baseOptionsVariants) {
+        try {
+          const lm = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: bo.modelAssetPath,
+              delegate,
+            },
+            numHands: 1,
+            runningMode: 'VIDEO',
+            ...(bo.minHandDetectionConfidence != null
+              ? {
+                  minHandDetectionConfidence: bo.minHandDetectionConfidence,
+                  minHandPresenceConfidence: bo.minHandPresenceConfidence,
+                  minTrackingConfidence: bo.minTrackingConfidence,
+                }
+              : {}),
+          });
+          console.log(
+            `HandLandmarker OK: wasm=${wasmRoot}, delegate=${delegate}, model=${bo.modelAssetPath.split('/').slice(-4, -1).join('/')}`,
+          );
+          return lm;
+        } catch (e) {
+          lastErr = e;
+        }
       }
     }
   }

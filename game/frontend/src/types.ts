@@ -31,7 +31,9 @@ export type NetPlayerState = {
   neckYaw: number;
   neckPitch: number;
   animation: string;
+  mouthOpenness: number;
   color: string;
+  displayName?: string;
   idleBob?: number;
   idlePitch?: number;
   idleRoll?: number;
@@ -67,6 +69,8 @@ export type RemotePlayer = {
   headBone: THREE.Object3D | null;
   headBaseQuat: THREE.Quaternion | null;
   desiredAnimation: string;
+  targetMouthOpenness: number;
+  smoothMouthOpenness: number;
   actions: Record<string, THREE.AnimationAction>;
   mixer: THREE.AnimationMixer | null;
   isProxy: boolean;
@@ -81,6 +85,7 @@ export type MovePayload = {
   neckYaw: number;
   neckPitch: number;
   animation: string;
+  mouthOpenness: number;
   idleBob: number;
   idlePitch: number;
   idleRoll: number;
