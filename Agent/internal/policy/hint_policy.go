@@ -33,14 +33,15 @@ const (
 )
 
 type HintSignals struct {
-	UseZone     bool
-	UseMotion   bool
-	UseMouth    bool
-	UseAirborne bool
-	UseFacing   bool
-	UseRelation bool
-	UseLandmark bool
-	UseNearWall bool
+	UseZone          bool
+	UseMotion        bool
+	UseMouth         bool
+	UseAirborne      bool
+	UseFacing        bool
+	UseRelation      bool
+	UseLandmark      bool
+	UseNearWall      bool
+	UseThemeMismatch bool
 }
 
 type HintPolicy struct {
@@ -77,6 +78,7 @@ func BuildHintPolicy(ev evidence.HintEvidence) HintPolicy {
 		p.Signals.UseNearWall = ev.Enemy.Environment.NearWall
 		p.Signals.UseFacing = shouldUseFacing(p.Specificity, ev)
 		p.Signals.UseRelation = shouldUseRelation(p.Specificity, ev)
+		p.Signals.UseThemeMismatch = shouldUseThemeMismatch(ev)
 	}
 
 	if p.Specificity == SpecificityHigh {
@@ -84,6 +86,10 @@ func BuildHintPolicy(ev evidence.HintEvidence) HintPolicy {
 	}
 
 	return p
+}
+
+func shouldUseThemeMismatch(ev evidence.HintEvidence) bool {
+	return ev.Request.AllyTheme != "" && ev.Request.EnemyTheme != ""
 }
 
 func specificityFromElapsedSec(elapsedSec int) HintSpecificity {

@@ -69,6 +69,8 @@ func TestBuildUserPrompt_UsesPolicyAndOmitsIdentifiers(t *testing.T) {
 		"ジャンプ",
 		"向き",
 		"行動ミッション（テーマ）",
+		"テーマとのズレ",
+		"市民側の流れと噛み合わない",
 	}
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(prompt, fragment) {

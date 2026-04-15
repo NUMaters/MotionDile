@@ -94,6 +94,10 @@ func fallbackHint(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) string
 		return "不審な動きあり。警戒せよ"
 	}
 
+	if hintPolicy.Signals.UseThemeMismatch {
+		parts = append(parts, "周囲と噛み合わない")
+	}
+
 	tpl := fallbackTemplates[ev.Request.HintNumber%len(fallbackTemplates)]
 	maxParts := 2
 	if hintPolicy.Specificity == policy.SpecificityHigh {

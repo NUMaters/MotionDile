@@ -111,6 +111,9 @@ func describeEnemyForPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPoli
 			lines = append(lines, "関係性: "+relation)
 		}
 	}
+	if hintPolicy.Signals.UseThemeMismatch {
+		lines = append(lines, formatThemeMismatchHint(ev.Request.AllyTheme, ev.Request.EnemyTheme))
+	}
 
 	return lines
 }
@@ -155,14 +158,18 @@ func orderedHintParts(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) []
 	if hintPolicy.Signals.UseFacing {
 		facing = formatFacing(ev.Enemy.Facing)
 	}
+	themeMismatch := ""
+	if hintPolicy.Signals.UseThemeMismatch {
+		themeMismatch = "市民側の流れと噛み合わない動き"
+	}
 
 	switch hintPolicy.PrimaryFocus {
 	case policy.FocusLocation:
-		return compactHintParts(location, movement, relation, facing)
+		return compactHintParts(location, movement, relation, themeMismatch, facing)
 	case policy.FocusRelation:
-		return compactHintParts(relation, movement, location, facing)
+		return compactHintParts(relation, movement, location, themeMismatch, facing)
 	default:
-		return compactHintParts(movement, location, relation, facing)
+		return compactHintParts(movement, location, relation, themeMismatch, facing)
 	}
 }
 
@@ -303,6 +310,13 @@ func formatRelation(ev evidence.HintEvidence) string {
 	}
 }
 
+func formatThemeMismatchHint(allyTheme, enemyTheme string) string {
+	if allyTheme == "" || enemyTheme == "" {
+		return ""
+	}
+	return "テーマ差分: 市民側の流れと噛み合わない行動として示唆する"
+}
+
 func formatSpecificity(specificity policy.HintSpecificity) string {
 	switch specificity {
 	case policy.SpecificityLow:
@@ -358,6 +372,9 @@ func allowedSignalLabels(hintPolicy policy.HintPolicy) []string {
 	}
 	if hintPolicy.Signals.UseRelation {
 		labels = append(labels, "関係性")
+	}
+	if hintPolicy.Signals.UseThemeMismatch {
+		labels = append(labels, "テーマとのズレ")
 	}
 	return labels
 }

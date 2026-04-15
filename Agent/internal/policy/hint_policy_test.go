@@ -76,6 +76,8 @@ func TestBuildHintPolicy_Hint2AllowsJumpFacingAndLocationSupport(t *testing.T) {
 		GameDuration: 30,
 		ElapsedSec:   30,
 		MapRadius:    1.3,
+		AllyTheme:    "みんなで円を描く",
+		EnemyTheme:   "端で待ち伏せする",
 		Players: []domain.PlayerInfo{
 			{
 				PlayerID:      "enemy",
@@ -106,6 +108,9 @@ func TestBuildHintPolicy_Hint2AllowsJumpFacingAndLocationSupport(t *testing.T) {
 	}
 	if !p.Signals.UseRelation {
 		t.Fatal("expected relation signal to be enabled for close grouping on hint2")
+	}
+	if !p.Signals.UseThemeMismatch {
+		t.Fatal("expected theme mismatch signal to be enabled when both themes are present")
 	}
 }
 
