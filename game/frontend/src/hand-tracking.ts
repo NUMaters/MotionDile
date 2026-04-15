@@ -10,7 +10,7 @@ import {
 } from './config';
 import { clamp, smoothToward, errorToText, getEl } from './utils';
 import { setHandModelStatus } from './hud';
-import { requestDeviceLookPermissionSync, startDeviceLook } from './device-look';
+import { beginDeviceLookFromUserGesture } from './device-look';
 
 let handLandmarker: HandLandmarker | null = null;
 let cameraActive = false;
@@ -365,34 +365,50 @@ export async function loadHandControlModel(): Promise<void> {
  * モーション許可（同期）→ 視点リスナー → カメラ起動をまとめて行う（iOS のユーザージェスチャ要件用）。
  */
 const firstTapOpts: AddEventListenerOptions = { capture: true, passive: true };
+/** iOS では pointer 系より touchstart の方がユーザージェスチャーとして安定する端末がある */
+const firstTouchOpts: AddEventListenerOptions = { capture: true, passive: true };
+
+export type ActivateSensorsOptions = {
+  /** カメラ起動失敗時（再タップ用に窓へリスナーを戻すときなど） */
+  onCameraFail?: () => void;
+};
 
 /**
- * ジョイスティック等がキャンバスより上でも拾えるよう、初回だけ `window` の capture で処理する。
- * `preventDefault` はしない（移動の初タップと兼用できるようにする）。
+ * 傾きセンサー＋カメラ。`ゲーム参加` の click など、ユーザージェスチャーの同期的なハンドラ内から呼ぶ。
  */
-export function showTapToStart(): void {
-  function bindStartListener(): void {
-    window.addEventListener('pointerdown', onFirstPointerDown, firstTapOpts);
+export function activateSensorsFromUserGesture(options?: ActivateSensorsOptions): void {
+  beginDeviceLookFromUserGesture();
+
+  void startCamera().then((ok) => {
+    if (ok) {
+      setHandModelStatus(savedHandModelHudLine);
+      return;
+    }
+    const hint = lastCameraErrorMessage || 'カメラを開始できません';
+    setHandModelStatus(`${savedHandModelHudLine} — ${hint}（画面をタップして再試行）`);
+    options?.onCameraFail?.();
+  });
+}
+
+/**
+ * カメラ起動に失敗したあと、画面のどこかをタップしたら再度センサー＋カメラを試す。
+ */
+export function registerSensorRetryOnWindowTap(): void {
+  function bind(): void {
+    window.addEventListener('pointerdown', onRetry, firstTapOpts);
+    window.addEventListener('touchstart', onRetry, firstTouchOpts);
   }
 
-  function onFirstPointerDown(): void {
-    window.removeEventListener('pointerdown', onFirstPointerDown, firstTapOpts);
+  function onRetry(): void {
+    window.removeEventListener('pointerdown', onRetry, firstTapOpts);
+    window.removeEventListener('touchstart', onRetry, firstTouchOpts);
 
-    requestDeviceLookPermissionSync();
-    startDeviceLook();
-
-    void startCamera().then((ok) => {
-      if (ok) {
-        setHandModelStatus(savedHandModelHudLine);
-        return;
-      }
-      const hint = lastCameraErrorMessage || 'カメラを開始できません';
-      setHandModelStatus(`${savedHandModelHudLine} — ${hint}（画面をタップして再試行）`);
-      bindStartListener();
+    activateSensorsFromUserGesture({
+      onCameraFail: bind,
     });
   }
 
-  bindStartListener();
+  bind();
 }
 
 function processHandResults(results: HandLandmarkerVideoResult) {

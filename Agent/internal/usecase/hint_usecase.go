@@ -41,13 +41,39 @@ func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (dom
 func sanitize(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, "\"「」")
-	return s
+	// モデルが付けがちな前置きを除去（クライアントは本文のみ表示）
+	prefixes := []string{
+		"監視AI通報:",
+		"監視AI通報：",
+		"監視AI通報 ",
+		"【監視AI通報】",
+		"【監視AI】",
+		"監視AI:",
+		"監視AI：",
+		"通報:",
+		"通報：",
+		"Agent:",
+		"Agent：",
+	}
+	for {
+		trimmed := false
+		for _, p := range prefixes {
+			if strings.HasPrefix(s, p) {
+				s = strings.TrimSpace(strings.TrimPrefix(s, p))
+				trimmed = true
+			}
+		}
+		if !trimmed {
+			break
+		}
+	}
+	return strings.TrimSpace(s)
 }
 
 var fallbackTemplates = []string{
-	"通報: %sで%sを確認。警戒せよ",
-	"目撃情報: %s付近で不審な動き。%s",
-	"警告: %sにて%s。注意されたし",
+	"%sで%sを確認。警戒せよ",
+	"%s付近で不審な動き。%s",
+	"%sにて%s。注意されたし",
 }
 
 func fallbackHint(req domain.HintRequest) string {
