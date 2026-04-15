@@ -6,15 +6,12 @@
   "scripts": {
     "build:model": "node modeling/scripts/build-wani-game-model.mjs",
     "viewer": "npx serve modeling -l 3000 --no-clipboard",
-    "dev": "concurrently -k -n backend,frontend \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev": "vite",
     "dev:frontend": "vite",
-    "dev:backend": "cd medea-pipeline/backend && go run ./cmd/server",
     "dev:game-backend": "cd game/backend && go run ./cmd/server",
-    "dev:all": "concurrently -k -n game,medea,frontend \"npm:dev:game-backend\" \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:all": "concurrently -k -n game,frontend \"npm:dev:game-backend\" \"npm:dev:frontend\"",
     "build": "vite build",
-    "preview": "vite preview",
-    "pipeline:train": "npx --yes tsx medea-pipeline/scripts/train-hand-control-model.ts",
-    "pipeline:train:example": "npx --yes tsx medea-pipeline/scripts/train-hand-control-model.ts medea-pipeline/data/hand-dataset.example.json public/models/hand-control-model.json"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.34",

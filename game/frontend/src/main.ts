@@ -455,25 +455,6 @@ function landmarksForHandControl(lm: HandLm[]): HandLm[] {
   return lm.map((p) => ({ x: 1 - p.x, y: 1 - p.y, z: p.z }));
 }
 
-function extractHandFeatures(lm: HandLm[]) {
-  const wrist = lm[0];
-  const midMCP = lm[9];
-  const handSize = Math.hypot(wrist.x - midMCP.x, wrist.y - midMCP.y, wrist.z - midMCP.z);
-  const fingerPairs = [[8, 5], [12, 9], [16, 13], [20, 17]];
-  let curlSum = 0;
-  for (const [tip, mcp] of fingerPairs) {
-    curlSum += Math.hypot(lm[tip].x - lm[mcp].x, lm[tip].y - lm[mcp].y, lm[tip].z - lm[mcp].z);
-  }
-  const avgCurl = handSize > 0.01 ? (curlSum / 4) / handSize : 0;
-
-  const handDx = midMCP.x - wrist.x;
-  const handDy = midMCP.y - wrist.y;
-  const handDz = midMCP.z - wrist.z;
-  const tiltAngle = Math.atan2(handDx, -handDy);
-  const pitchAngle = Math.atan2(handDz, Math.hypot(handDx, handDy));
-
-  return { avgCurl, tiltAngle, pitchAngle };
-}
 
 function mergeHandModel(raw: unknown): HandControlModel {
   if (!raw || typeof raw !== 'object') return structuredClone(DEFAULT_HAND_CONTROL_MODEL);
@@ -562,14 +543,13 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   handState.detected = true;
   const lm = results.landmarks[0];
 
-  // Draw landmarks on overlay
+  // --- オーバーレイ描画 ---
   ctx.fillStyle = '#00ff88';
   for (const p of lm) {
     ctx.beginPath();
     ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 3, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Draw connections (thumb-to-finger line for mouth feedback)
   ctx.strokeStyle = 'rgba(0,255,136,.4)';
   ctx.lineWidth = 2;
   const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
@@ -580,15 +560,86 @@ function processHandResults(results: HandLandmarkerVideoResult) {
     ctx.stroke();
   }
 
-  const f = extractHandFeatures(landmarksForHandControl(lm));
-  const m = handControlModel;
-  const mouthRange = Math.max(0.05, m.mouth.openCurl - m.mouth.closedCurl);
-  handState.mouthOpenness = clamp((f.avgCurl - m.mouth.closedCurl) / mouthRange, 0, 1);
-  const yaw = clamp((f.tiltAngle - m.neck.neutralTilt) * m.neck.yawGain, -m.neck.maxYaw, m.neck.maxYaw);
-  const pitch = clamp((f.pitchAngle - m.neck.neutralPitchAngle) * m.neck.pitchGain, -m.neck.maxPitch, m.neck.maxPitch);
-  // 微小なブレを打ち消して停止時の首ドリフトを防ぐ
-  handState.neckYaw = Math.abs(yaw) < 0.035 ? 0 : yaw;
-  handState.neckPitch = Math.abs(pitch) < 0.03 ? 0 : pitch;
+  // =======================================================
+  // ⚙️ 完璧なマッチングのための設定（角度ベース）
+  // =======================================================
+  const CONFIG = {
+    // 【首の向き】
+    YAW_GAIN: 1.0,           // 1.0で手と完全に同じ角度（1:1）。少し強調したい場合は1.2など
+    PITCH_GAIN: 1.2,         // ワニの首の構造上、上下は少し強め（1.2倍）に反映すると自然です
+    MAX_YAW: 1.0,            // 限界角度を少し広げる
+    MAX_PITCH: 0.8,
+
+    // 【口の開閉（※変更点：距離ではなく「角度」で判定）】
+    // ラジアン(rad)での指定です。1.0rad は約57度。
+    MOUTH_CLOSE_ANGLE: 0.15, // 指の角度がこれ以下なら閉じる
+    MOUTH_OPEN_ANGLE: 0.60,  // 指の角度がこれ以上なら全開
+  };
+
+  const isRightHand = results.handednesses[0][0].categoryName === 'Right';
+  const mirroredLm = landmarksForHandControl(lm); 
+
+  // Three.jsのVector3に変換して、完璧な3D計算を行えるようにする
+  const vWrist = new THREE.Vector3(mirroredLm[0].x, mirroredLm[0].y, mirroredLm[0].z);
+  const vThumb = new THREE.Vector3(mirroredLm[4].x, mirroredLm[4].y, mirroredLm[4].z);
+  const vIndex = new THREE.Vector3(mirroredLm[8].x, mirroredLm[8].y, mirroredLm[8].z);
+  const vMiddleBase = new THREE.Vector3(mirroredLm[9].x, mirroredLm[9].y, mirroredLm[9].z);
+  const vIndexBase = new THREE.Vector3(mirroredLm[5].x, mirroredLm[5].y, mirroredLm[5].z);
+  const vPinkyBase = new THREE.Vector3(mirroredLm[17].x, mirroredLm[17].y, mirroredLm[17].z);
+
+  // -------------------------------------------------------
+  // 🛡️ 手の甲の判定（外積計算の3D化）
+  // -------------------------------------------------------
+  const vecA = new THREE.Vector3().subVectors(vIndexBase, vWrist);
+  const vecB = new THREE.Vector3().subVectors(vPinkyBase, vWrist);
+  const normalVec = new THREE.Vector3().crossVectors(vecA, vecB);
+
+  let isBackOfHand = false;
+  if (isRightHand) {
+    isBackOfHand = normalVec.z < 0;
+  } else {
+    isBackOfHand = normalVec.z > 0;
+  }
+
+  if (!isBackOfHand) {
+    handState.mouthOpenness = 0;
+    handState.neckYaw = 0;
+    handState.neckPitch = 0;
+    return; // 手のひらが見えている時は操作をスキップ
+  }
+
+  // -------------------------------------------------------
+  // 🐊 1. 口の開閉（カメラ距離に依存しない「角度」マッピング）
+  // -------------------------------------------------------
+  // 手首から親指先へのベクトルと、手首から人差し指先へのベクトルを作る
+  const dirThumb = new THREE.Vector3().subVectors(vThumb, vWrist).normalize();
+  const dirIndex = new THREE.Vector3().subVectors(vIndex, vWrist).normalize();
+  
+  // 2つの指の「なす角（ラジアン）」を計算する
+  const pinchAngle = dirThumb.angleTo(dirIndex);
+
+  // 角度を元に 0.0 ~ 1.0 に完璧に変換する
+  const angleRange = CONFIG.MOUTH_OPEN_ANGLE - CONFIG.MOUTH_CLOSE_ANGLE;
+  handState.mouthOpenness = clamp((pinchAngle - CONFIG.MOUTH_CLOSE_ANGLE) / angleRange, 0, 1);
+
+  // -------------------------------------------------------
+  // 🐊 2. 首の向き（純粋な3Dベクトルからの角度抽出）
+  // -------------------------------------------------------
+  // 手の基準となる軸（手首 → 中指の根本）
+  const handAxis = new THREE.Vector3().subVectors(vMiddleBase, vWrist).normalize();
+
+  // X成分（左右の傾き）を抽出してYawとする。asin（アークサイン）で正確な角度を算出
+  const rawYaw = Math.asin(-handAxis.x) * CONFIG.YAW_GAIN;
+  
+  // Z成分（前後の傾き、奥行き）を抽出してPitchとする
+  const rawPitch = Math.asin(-handAxis.z) * CONFIG.PITCH_GAIN;
+
+  handState.neckYaw = clamp(rawYaw, -CONFIG.MAX_YAW, CONFIG.MAX_YAW);
+  handState.neckPitch = clamp(rawPitch, -CONFIG.MAX_PITCH, CONFIG.MAX_PITCH);
+
+  // ブレ防止のデッドゾーン
+  if (Math.abs(handState.neckYaw) < 0.035) handState.neckYaw = 0;
+  if (Math.abs(handState.neckPitch) < 0.03) handState.neckPitch = 0;
 }
 
 function updateHandTracking(now: number) {
@@ -1289,7 +1340,7 @@ async function loadModel() {
 
 updateHudText();
 void initMultiplayer();
-void loadHandControlModel();
+//void loadHandControlModel();// いったん手モデルは読み込まない。学習済みモデルはパラメータ調整の必要があるため、後で別途公開する。
 void loadModel();
 
 window.addEventListener('beforeunload', () => {
