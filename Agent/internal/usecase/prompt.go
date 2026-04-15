@@ -2,10 +2,9 @@ package usecase
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
-	"agent/internal/domain"
+	"agent/internal/evidence"
 )
 
 const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェントです。
@@ -36,55 +35,46 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 - 他プレイヤーとの距離感（孤立している、群れから離れている、誰かの近くにいる）
 - 移動方向（北に向かっている、境界に向かって走っている）`
 
-func buildUserPrompt(req domain.HintRequest) string {
-	var enemy *domain.PlayerInfo
-	citizens := make([]domain.PlayerInfo, 0, len(req.Players))
-	for i := range req.Players {
-		if req.Players[i].IsEnemy {
-			enemy = &req.Players[i]
-		} else {
-			citizens = append(citizens, req.Players[i])
-		}
-	}
-	if enemy == nil {
+func buildUserPrompt(ev evidence.HintEvidence) string {
+	if ev.Enemy == nil {
 		return "敵の情報がありません。「情報収集中…」と答えてください。"
 	}
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("ヒント番号: %d（%d番目のヒント） / ゲーム経過: %d秒 / ゲーム時間: %d秒\n",
-		req.HintNumber, req.HintNumber, req.ElapsedSec, req.GameDuration))
+		ev.Request.HintNumber, ev.Request.HintNumber, ev.Request.ElapsedSec, ev.Request.GameDuration))
 
-	if req.HintNumber <= 1 {
+	if ev.Request.HintNumber <= 1 {
 		sb.WriteString("→ 序盤なので「曖昧」なヒントにしてください\n\n")
-	} else if req.HintNumber == 2 {
+	} else if ev.Request.HintNumber == 2 {
 		sb.WriteString("→ 中盤なので「やや具体的」なヒントにしてください\n\n")
 	} else {
 		sb.WriteString("→ 終盤なので「かなり具体的」なヒントにしてください\n\n")
 	}
 
 	sb.WriteString("【敵ワニの状態】\n")
-	sb.WriteString(formatPlayerFull(enemy, req.MapRadius, req.Landmarks))
+	sb.WriteString(formatPlayerFull(*ev.Enemy))
 	sb.WriteString("\n")
 
-	if len(citizens) > 0 {
+	if len(ev.Citizens) > 0 {
 		sb.WriteString("【市民プレイヤーの状態】\n")
-		for i := range citizens {
+		for i := range ev.Citizens {
 			sb.WriteString(fmt.Sprintf("- %s: %s\n",
-				citizens[i].DisplayName,
-				formatBrief(&citizens[i], req.MapRadius, req.Landmarks),
+				ev.Citizens[i].Source.DisplayName,
+				formatBrief(ev.Citizens[i]),
 			))
 		}
 		sb.WriteString("\n")
 	}
 
-	nearest := findNearestCitizen(enemy, citizens)
-	if nearest != nil {
-		dist := distance(enemy, nearest)
-		sb.WriteString(fmt.Sprintf("敵に最も近い市民: %s（距離 %.2f）\n", nearest.DisplayName, dist))
+	if ev.NearestCitizen != nil {
+		sb.WriteString(fmt.Sprintf("敵に最も近い市民: %s（距離 %.2f）\n",
+			ev.NearestCitizen.Player.Source.DisplayName,
+			ev.NearestCitizen.Distance,
+		))
 	}
 
-	isolated := isIsolated(enemy, citizens)
-	if isolated {
+	if ev.EnemyIsIsolated {
 		sb.WriteString("※敵ワニは他のプレイヤーから孤立しています\n")
 	}
 
@@ -93,110 +83,121 @@ func buildUserPrompt(req domain.HintRequest) string {
 	return sb.String()
 }
 
-func formatPlayerFull(p *domain.PlayerInfo, mapRadius float64, landmarks []domain.LandmarkInfo) string {
-	zone := positionToZone(p.X, p.Z, mapRadius)
-	movement := animationToLabel(p.Animation)
-	location := locationContext(p.X, p.Z, mapRadius, p.Animation, landmarks)
-	facing := facingDirection(p.RotationY)
-
+func formatPlayerFull(player evidence.PlayerEvidence) string {
 	lines := fmt.Sprintf(
 		"  位置: %s\n  行動: %s\n  向き: %s\n  場所の特徴: %s\n",
-		zone, movement, facing, location,
+		formatZone(player.Zone),
+		formatMotion(player.Motion),
+		formatFacing(player.Facing),
+		formatLocation(player.Environment, player.Motion),
 	)
 
-	if animationSuggestsAirborne(p.Animation) {
+	if player.Motion.IsAirborneByAnimTag {
 		lines += "  ※ジャンプ中（空中にいる可能性）\n"
 	}
-	if p.MouthOpenness > 0.4 {
+	if player.MouthOpen {
 		lines += "  ※口を開けている（威嚇的な状態）\n"
 	}
 
 	return lines
 }
 
-func formatBrief(p *domain.PlayerInfo, mapRadius float64, landmarks []domain.LandmarkInfo) string {
-	zone := positionToZone(p.X, p.Z, mapRadius)
-	movement := animationToLabel(p.Animation)
+func formatBrief(player evidence.PlayerEvidence) string {
 	extras := ""
-	if animationSuggestsAirborne(p.Animation) {
+	if player.Motion.IsAirborneByAnimTag {
 		extras += " [ジャンプ]"
 	}
-	if p.MouthOpenness > 0.4 {
+	if player.MouthOpen {
 		extras += " [口開]"
 	}
-	near := nearestLandmark(p.X, p.Z, landmarks, 0.35)
+	near := formatNearbyLandmark(player.Environment.NearbyLandmark)
 	if near != "" {
 		extras += " [" + near + "]"
 	}
-	return fmt.Sprintf("%s で %s%s", zone, movement, extras)
+	return fmt.Sprintf("%s で %s%s", formatZone(player.Zone), formatMotion(player.Motion), extras)
 }
 
-func positionToZone(x, z, mapRadius float64) string {
-	distFromCenter := math.Sqrt(x*x + z*z)
-	var proximity string
-	if mapRadius > 0 {
-		ratio := distFromCenter / mapRadius
-		if ratio < 0.33 {
-			proximity = "中央"
-		} else if ratio < 0.66 {
-			proximity = "中間"
-		} else {
-			proximity = "外周"
-		}
-	} else {
-		if distFromCenter < 0.4 {
-			proximity = "中央"
-		} else if distFromCenter < 0.8 {
-			proximity = "中間"
-		} else {
-			proximity = "外周"
-		}
+func formatLocation(environment evidence.EnvironmentEvidence, motion evidence.MotionEvidence) string {
+	parts := []string{}
+	if environment.NearWall {
+		parts = append(parts, "境界の壁付近")
 	}
+	if environment.NearCenter {
+		parts = append(parts, "マップ中央の開けた場所")
+	}
+	if motion.IsAirborneByAnimTag {
+		parts = append(parts, "空中（ジャンプ中の可能性）")
+	}
+	near := formatNearbyLandmark(environment.NearbyLandmark)
+	if near != "" {
+		parts = append(parts, near)
+	}
+	if len(parts) == 0 {
+		return "通常の地面付近"
+	}
+	return strings.Join(parts, "、")
+}
 
-	ns, ew := "", ""
-	threshold := 0.25
-	if mapRadius > 0 {
-		threshold = mapRadius * 0.2
-	}
-	if z > threshold {
-		ns = "北"
-	} else if z < -threshold {
-		ns = "南"
-	}
-	if x > threshold {
-		ew = "東"
-	} else if x < -threshold {
-		ew = "西"
-	}
-
-	direction := ns + ew
+func formatZone(zone evidence.ZoneEvidence) string {
+	proximity := formatProximity(zone.Proximity)
+	direction := formatZoneDirection(zone)
 	if direction == "" {
 		return proximity + "エリア"
 	}
 	return proximity + "の" + direction + "寄り"
 }
 
-func animationToLabel(anim string) string {
-	lower := strings.ToLower(anim)
-	hasMouth := strings.Contains(lower, "mouthopen")
+func formatProximity(proximity evidence.ProximityKind) string {
+	switch proximity {
+	case evidence.ProximityCenter:
+		return "中央"
+	case evidence.ProximityMiddle:
+		return "中間"
+	case evidence.ProximityOuter:
+		return "外周"
+	default:
+		return "不明"
+	}
+}
 
-	switch {
-	case strings.Contains(lower, "run"):
-		if hasMouth {
+func formatZoneDirection(zone evidence.ZoneEvidence) string {
+	ns := ""
+	switch zone.NorthSouth {
+	case evidence.VerticalBiasNorth:
+		ns = "北"
+	case evidence.VerticalBiasSouth:
+		ns = "南"
+	}
+
+	ew := ""
+	switch zone.EastWest {
+	case evidence.HorizontalBiasEast:
+		ew = "東"
+	case evidence.HorizontalBiasWest:
+		ew = "西"
+	}
+
+	return ns + ew
+}
+
+func formatMotion(motion evidence.MotionEvidence) string {
+	switch motion.Kind {
+	case evidence.MotionRun:
+		if motion.UsesMouthAnimation {
 			return "口を開けて走行中"
 		}
 		return "走行中"
-	case strings.Contains(lower, "walk"):
-		if hasMouth {
+	case evidence.MotionWalk:
+		if motion.UsesMouthAnimation {
 			return "口を開けて歩行中"
 		}
 		return "歩行中"
-	case strings.Contains(lower, "attack"):
+	case evidence.MotionAttack:
 		return "攻撃動作中"
-	case strings.Contains(lower, "tailwag"):
+	case evidence.MotionTailWag:
 		return "尻尾を振っている"
-	case strings.Contains(lower, "idle"):
-		if hasMouth {
+	case evidence.MotionIdle:
+		if motion.UsesMouthAnimation {
 			return "口を開けて静止中"
 		}
 		return "静止中"
@@ -205,115 +206,39 @@ func animationToLabel(anim string) string {
 	}
 }
 
-func animationSuggestsAirborne(anim string) bool {
-	a := strings.ToLower(anim)
-	return strings.Contains(a, "jump")
-}
-
-func nearestLandmark(x, z float64, landmarks []domain.LandmarkInfo, threshold float64) string {
-	bestDist := threshold
-	bestType := ""
-	for _, lm := range landmarks {
-		dx := x - lm.X
-		dz := z - lm.Z
-		d := math.Sqrt(dx*dx + dz*dz)
-		if d < bestDist {
-			bestDist = d
-			bestType = lm.Type
-		}
-	}
-	switch bestType {
-	case "rock":
-		return "岩の近く"
-	case "tree":
-		return "木の近く"
-	}
-	return ""
-}
-
-func locationContext(x, z, mapRadius float64, animation string, landmarks []domain.LandmarkInfo) string {
-	parts := []string{}
-
-	distFromCenter := math.Sqrt(x*x + z*z)
-	if mapRadius > 0 && distFromCenter > mapRadius*0.8 {
-		parts = append(parts, "境界の壁付近")
-	}
-
-	if distFromCenter < 0.3 {
-		parts = append(parts, "マップ中央の開けた場所")
-	}
-
-	if animationSuggestsAirborne(animation) {
-		parts = append(parts, "空中（ジャンプ中の可能性）")
-	}
-
-	near := nearestLandmark(x, z, landmarks, 0.35)
-	if near != "" {
-		parts = append(parts, near)
-	}
-
-	if len(parts) == 0 {
-		return "通常の地面付近"
-	}
-	return strings.Join(parts, "、")
-}
-
-func facingDirection(rotY float64) string {
-	deg := math.Mod(rotY*180/math.Pi, 360)
-	if deg < 0 {
-		deg += 360
-	}
-
-	switch {
-	case deg < 22.5 || deg >= 337.5:
+func formatFacing(facing evidence.FacingDirection) string {
+	switch facing {
+	case evidence.FacingNorth:
 		return "北向き"
-	case deg < 67.5:
+	case evidence.FacingNorthEast:
 		return "北東向き"
-	case deg < 112.5:
+	case evidence.FacingEast:
 		return "東向き"
-	case deg < 157.5:
+	case evidence.FacingSouthEast:
 		return "南東向き"
-	case deg < 202.5:
+	case evidence.FacingSouth:
 		return "南向き"
-	case deg < 247.5:
+	case evidence.FacingSouthWest:
 		return "南西向き"
-	case deg < 292.5:
+	case evidence.FacingWest:
 		return "西向き"
-	default:
+	case evidence.FacingNorthWest:
 		return "北西向き"
+	default:
+		return "不明な向き"
 	}
 }
 
-func distance(a, b *domain.PlayerInfo) float64 {
-	dx := a.X - b.X
-	dz := a.Z - b.Z
-	return math.Sqrt(dx*dx + dz*dz)
-}
-
-func findNearestCitizen(enemy *domain.PlayerInfo, citizens []domain.PlayerInfo) *domain.PlayerInfo {
-	if len(citizens) == 0 {
-		return nil
+func formatNearbyLandmark(landmark evidence.LandmarkEvidence) string {
+	if !landmark.Found {
+		return ""
 	}
-	var nearest *domain.PlayerInfo
-	minDist := math.MaxFloat64
-	for i := range citizens {
-		d := distance(enemy, &citizens[i])
-		if d < minDist {
-			minDist = d
-			nearest = &citizens[i]
-		}
+	switch landmark.Kind {
+	case evidence.LandmarkRock:
+		return "岩の近く"
+	case evidence.LandmarkTree:
+		return "木の近く"
+	default:
+		return ""
 	}
-	return nearest
-}
-
-func isIsolated(enemy *domain.PlayerInfo, citizens []domain.PlayerInfo) bool {
-	if len(citizens) == 0 {
-		return false
-	}
-	for i := range citizens {
-		if distance(enemy, &citizens[i]) < 0.5 {
-			return false
-		}
-	}
-	return true
 }
