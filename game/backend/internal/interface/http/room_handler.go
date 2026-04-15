@@ -18,7 +18,8 @@ func NewRoomHandler(usecase *usecase.RoomUsecase) *RoomHandler {
 }
 
 type joinRequest struct {
-	PlayerID string `json:"playerId"`
+	PlayerID    string `json:"playerId"`
+	DisplayName string `json:"displayName"`
 }
 
 func (h *RoomHandler) Join(c *gin.Context) {
@@ -30,8 +31,9 @@ func (h *RoomHandler) Join(c *gin.Context) {
 	}
 
 	snapshot, err := h.usecase.Join(c.Request.Context(), usecase.JoinInput{
-		RoomID:   roomID,
-		PlayerID: req.PlayerID,
+		RoomID:      roomID,
+		PlayerID:    req.PlayerID,
+		DisplayName: req.DisplayName,
 	})
 	if err != nil {
 		if errors.Is(err, usecase.ErrInvalidInput) {

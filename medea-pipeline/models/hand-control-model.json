@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "trainedAt": "2026-04-14T16:39:30.676Z",
+  "stats": {
+    "totalSamples": 393,
+    "openSamples": 96,
+    "closedSamples": 49,
+    "yawSamples": 248,
+    "pitchSamples": 248
+  },
+  "mouth": {
+    "closedCurl": 0.5952178122010439,
+    "openCurl": 0.8338687993892129,
+    "openThreshold": 0.5
+  },
+  "neck": {
+    "neutralTilt": 1.453624837014742,
+    "yawGain": -0.14091405527439063,
+    "maxYaw": 0.7,
+    "neutralPitchAngle": 0.5379974144456641,
+    "pitchGain": -0.47514601733174633,
+    "maxPitch": 0.5
+  }
+}

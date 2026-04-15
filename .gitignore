@@ -1,5 +1,15 @@
 node_modules/
 dist/
+.DS_Store
+**/.DS_Store
 # 開発時に modeling からコピーされる（約20MB）。リポジトリには含めない
 public/modeling/Wani_game.glb
 medea-pipeline/data/hand-dataset.json
+
+# Environment variables (secrets/local settings)
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
