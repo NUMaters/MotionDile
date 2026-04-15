@@ -13,7 +13,7 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 
 ## ゲームの仕組み
 - 市民チームと敵ワニにはそれぞれ異なる「行動ミッション（テーマ）」が割り当てられている
-- 市民はミッションどおりに行動し、**自分と違う動きをしているプレイヤー（＝敵ワニ）を見つけ出す**
+- 市民はミッションどおりに行動し、自分と違う動きをしているプレイヤーを見つけ出す
 - 敵ワニは自分のミッションに従って行動するが、市民チームのミッションとは異なる行動になる
 
 ## マップ情報
@@ -25,24 +25,14 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 
 ## ルール
 - 敵プレイヤーの名前や色を直接言ってはいけない
-- **テーマ名を直接言わない**。テーマの内容を示唆するようなヒントにする
+- テーマ名を直接言わない。テーマの内容を示唆するようなヒントにする
 - 位置（方角・エリア）、行動（走る・歩く・ジャンプ・じっとしている）、周囲の特徴（岩の近く・壁際・中央の広場）を組み合わせてヒントにする
 - 敵の行動が「市民テーマと違う」ことをほのめかす表現を使う
 - ヒントは1〜2文、日本語50文字以内で簡潔に
-- ゲーム序盤（hint1）はかなり曖昧に、中盤（hint2）でやや具体的に、終盤（hint3）はかなり具体的にする
-- 口調は短く緊迫感のある日本語（監視カメラの独白のようなニュアンス）でよいが、**出力はヒント本文だけ**とする
-- **禁止**: 冒頭の「監視AI通報:」「監視AI通報」「通報:」「【監視AI】」などの**ラベル・肩書・コロン付き見出し**は一切付けない（クライアントがそのまま表示するため）
-- 絵文字は使わない
-- 毎回異なる表現を使い、同じパターンの繰り返しを避ける
-
-## ヒントに使える情報の例
-- 方角（北東エリア、南西の端 etc）
-- 行動（走り回っている、じっと立ち止まっている、ジャンプしている、歩き回っている）
-- 口の状態（口を開けている=威嚇的）
-- 場所の特徴（岩の近く・岩陰、木の近く・木の陰、壁際、マップ中央、開けた場所）
-- 他プレイヤーとの距離感（孤立している、群れから離れている、誰かの近くにいる）
-- 移動方向（北に向かっている、境界に向かって走っている）
-- テーマとの一致度（ミッションと合わない行動をしている、指示通りに動いていない等）`
+- 15秒付近のヒントはかなり曖昧に、30秒付近ではやや具体的に、45秒以降はかなり具体的にする
+- 口調は短く緊迫感のある日本語でよいが、出力はヒント本文だけとする
+- 禁止: 「監視AI通報」「通報:」などのラベル、絵文字、個人特定に繋がる記述
+- 毎回異なる表現を使い、同じパターンの繰り返しを避ける`
 
 func buildUserPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) string {
 	if ev.Enemy == nil {
@@ -53,44 +43,25 @@ func buildUserPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) str
 	sb.WriteString(fmt.Sprintf("ヒント番号: %d（%d番目のヒント） / ゲーム経過: %d秒 / ゲーム時間: %d秒\n",
 		ev.Request.HintNumber, ev.Request.HintNumber, ev.Request.ElapsedSec, ev.Request.GameDuration))
 	sb.WriteString(fmt.Sprintf("→ 具体度: %s / 主軸: %s\n", formatSpecificity(hintPolicy.Specificity), formatFocus(hintPolicy.PrimaryFocus)))
+	sb.WriteString("→ 具体度ルール: 15秒付近=小ヒント、30秒付近=中ヒント、45秒以降=強ヒント\n")
 	sb.WriteString(fmt.Sprintf("→ 使ってよい情報: %s\n", strings.Join(allowedSignalLabels(hintPolicy), "、")))
 	sb.WriteString("→ 禁止: 名前、色、数値距離、個人特定につながる表現\n\n")
+
+	if ev.Request.AllyTheme != "" || ev.Request.EnemyTheme != "" {
+		sb.WriteString("【行動ミッション（テーマ）】\n")
+		if ev.Request.AllyTheme != "" {
+			sb.WriteString(fmt.Sprintf("- 市民チームのテーマ: 「%s」\n", ev.Request.AllyTheme))
+		}
+		if ev.Request.EnemyTheme != "" {
+			sb.WriteString(fmt.Sprintf("- 敵ワニのテーマ: 「%s」\n", ev.Request.EnemyTheme))
+		}
+		sb.WriteString("- テーマ名はヒント本文に出さず、敵の行動が市民と噛み合っていないことを示唆してください\n\n")
+	}
 
 	sb.WriteString("【敵ワニの観測事実】\n")
 	for _, line := range describeEnemyForPrompt(ev, hintPolicy) {
 		sb.WriteString("- ")
 		sb.WriteString(line)
-	if req.HintNumber <= 1 {
-		sb.WriteString("→ 序盤なので「曖昧」なヒントにしてください\n\n")
-	} else if req.HintNumber == 2 {
-		sb.WriteString("→ 中盤なので「やや具体的」なヒントにしてください\n\n")
-	} else {
-		sb.WriteString("→ 終盤なので「かなり具体的」なヒントにしてください\n\n")
-	}
-
-	if req.AllyTheme != "" || req.EnemyTheme != "" {
-		sb.WriteString("【行動ミッション（テーマ）】\n")
-		if req.AllyTheme != "" {
-			sb.WriteString(fmt.Sprintf("  市民チームのテーマ: 「%s」\n", req.AllyTheme))
-		}
-		if req.EnemyTheme != "" {
-			sb.WriteString(fmt.Sprintf("  敵ワニのテーマ: 「%s」\n", req.EnemyTheme))
-		}
-		sb.WriteString("  ※テーマ名を直接言わず、敵の行動が市民と違うことを示唆するヒントにしてください\n\n")
-	}
-
-	sb.WriteString("【敵ワニの状態】\n")
-	sb.WriteString(formatPlayerFull(enemy, req.MapRadius, req.Landmarks))
-	sb.WriteString("\n")
-
-	if len(citizens) > 0 {
-		sb.WriteString("【市民プレイヤーの状態】\n")
-		for i := range citizens {
-			sb.WriteString(fmt.Sprintf("- %s: %s\n",
-				citizens[i].DisplayName,
-				formatBrief(&citizens[i], req.MapRadius, req.Landmarks),
-			))
-		}
 		sb.WriteString("\n")
 	}
 

@@ -12,7 +12,7 @@ func TestBuildHintPolicy_InformationPendingWhenEnemyMissing(t *testing.T) {
 		RoomID:       "room-1",
 		HintNumber:   1,
 		GameDuration: 30,
-		ElapsedSec:   5,
+		ElapsedSec:   15,
 		MapRadius:    1.3,
 		Players: []domain.PlayerInfo{
 			{PlayerID: "citizen-1", Animation: "Idle"},
@@ -34,7 +34,7 @@ func TestBuildHintPolicy_Hint1PrefersMovementAndSuppressesJumpAndFacing(t *testi
 		RoomID:       "room-1",
 		HintNumber:   1,
 		GameDuration: 30,
-		ElapsedSec:   5,
+		ElapsedSec:   15,
 		MapRadius:    1.3,
 		Players: []domain.PlayerInfo{
 			{
@@ -74,7 +74,7 @@ func TestBuildHintPolicy_Hint2AllowsJumpFacingAndLocationSupport(t *testing.T) {
 		RoomID:       "room-1",
 		HintNumber:   2,
 		GameDuration: 30,
-		ElapsedSec:   12,
+		ElapsedSec:   30,
 		MapRadius:    1.3,
 		Players: []domain.PlayerInfo{
 			{
@@ -114,7 +114,7 @@ func TestBuildHintPolicy_Hint3CanShiftToLocationFocus(t *testing.T) {
 		RoomID:       "room-1",
 		HintNumber:   3,
 		GameDuration: 30,
-		ElapsedSec:   18,
+		ElapsedSec:   45,
 		MapRadius:    1.3,
 		Players: []domain.PlayerInfo{
 			{

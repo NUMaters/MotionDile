@@ -13,9 +13,11 @@ func TestBuildUserPrompt_UsesPolicyAndOmitsIdentifiers(t *testing.T) {
 	req := domain.HintRequest{
 		RoomID:       "room-1",
 		HintNumber:   2,
-		GameDuration: 30,
-		ElapsedSec:   10,
+		GameDuration: 60,
+		ElapsedSec:   30,
 		MapRadius:    1.3,
+		AllyTheme:    "みんなで円を描く",
+		EnemyTheme:   "端で待ち伏せする",
 		Players: []domain.PlayerInfo{
 			{
 				PlayerID:      "enemy",
@@ -66,6 +68,7 @@ func TestBuildUserPrompt_UsesPolicyAndOmitsIdentifiers(t *testing.T) {
 		"口の開き",
 		"ジャンプ",
 		"向き",
+		"行動ミッション（テーマ）",
 	}
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(prompt, fragment) {

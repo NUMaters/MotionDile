@@ -54,7 +54,7 @@ type HintPolicy struct {
 func BuildHintPolicy(ev evidence.HintEvidence) HintPolicy {
 	p := HintPolicy{
 		Action:       ActionGenerateHint,
-		Specificity:  specificityFromHintNumber(ev.Request.HintNumber),
+		Specificity:  specificityFromElapsedSec(ev.Request.ElapsedSec),
 		PrimaryFocus: FocusMovement,
 		Composer:     ComposerLLM,
 		Signals: HintSignals{
@@ -86,11 +86,11 @@ func BuildHintPolicy(ev evidence.HintEvidence) HintPolicy {
 	return p
 }
 
-func specificityFromHintNumber(hintNumber int) HintSpecificity {
+func specificityFromElapsedSec(elapsedSec int) HintSpecificity {
 	switch {
-	case hintNumber <= 1:
+	case elapsedSec < 30:
 		return SpecificityLow
-	case hintNumber == 2:
+	case elapsedSec < 45:
 		return SpecificityMedium
 	default:
 		return SpecificityHigh
