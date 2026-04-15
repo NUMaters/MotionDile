@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"strings"
 
 	"agent/internal/domain"
+	"agent/internal/evidence"
 	"agent/internal/infrastructure/openai"
 )
 
@@ -22,17 +22,18 @@ func NewHintUsecase(ai *openai.Client) *HintUsecase {
 // Generate は HintRequest を受け取り、OpenAI でヒントを生成して返す。
 // API 障害時はフォールバックで静的ヒントを返す。
 func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (domain.HintResponse, error) {
-	userPrompt := buildUserPrompt(req)
+	hintEvidence := evidence.BuildHintEvidence(req)
+	userPrompt := buildUserPrompt(hintEvidence)
 
 	text, err := u.ai.ChatCompletion(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		log.Printf("[agent] OpenAI error, falling back: %v", err)
-		return domain.HintResponse{Text: fallbackHint(req)}, nil
+		return domain.HintResponse{Text: fallbackHint(hintEvidence)}, nil
 	}
 
 	text = sanitize(text)
 	if text == "" {
-		return domain.HintResponse{Text: fallbackHint(req)}, nil
+		return domain.HintResponse{Text: fallbackHint(hintEvidence)}, nil
 	}
 
 	return domain.HintResponse{Text: text}, nil
@@ -76,29 +77,22 @@ var fallbackTemplates = []string{
 	"%sにて%s。注意されたし",
 }
 
-func fallbackHint(req domain.HintRequest) string {
-	var enemy *domain.PlayerInfo
-	for i := range req.Players {
-		if req.Players[i].IsEnemy {
-			enemy = &req.Players[i]
-			break
-		}
-	}
-	if enemy == nil {
+func fallbackHint(ev evidence.HintEvidence) string {
+	if ev.Enemy == nil {
 		return "情報収集中…しばらくお待ちください"
 	}
 
-	zone := positionToZone(enemy.X, enemy.Z, req.MapRadius)
-	movement := animationToLabel(enemy.Animation)
+	zone := formatZone(ev.Enemy.Zone)
+	movement := formatMotion(ev.Enemy.Motion)
 
 	extras := []string{}
-	if enemy.Y > 0.15 {
+	if ev.Enemy.Source.Y > 0.15 {
 		extras = append(extras, "高所から")
 	}
-	if enemy.MouthOpenness > 0.4 {
+	if ev.Enemy.MouthOpen {
 		extras = append(extras, "威嚇しつつ")
 	}
-	if req.MapRadius > 0 && math.Sqrt(enemy.X*enemy.X+enemy.Z*enemy.Z) > req.MapRadius*0.8 {
+	if ev.Enemy.Environment.NearWall {
 		extras = append(extras, "壁際で")
 	}
 
@@ -107,6 +101,6 @@ func fallbackHint(req domain.HintRequest) string {
 		prefix = strings.Join(extras, "") + " "
 	}
 
-	tpl := fallbackTemplates[req.HintNumber%len(fallbackTemplates)]
+	tpl := fallbackTemplates[ev.Request.HintNumber%len(fallbackTemplates)]
 	return fmt.Sprintf(tpl, zone, prefix+movement)
 }
