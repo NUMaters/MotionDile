@@ -10,7 +10,7 @@
     "dev:frontend": "vite",
     "dev:backend": "go run -C medea-pipeline/backend ./cmd/server",
     "dev:game-backend": "go run -C game/backend ./cmd/server",
-    "dev:agent": "go run -C agent ./cmd/server",
+    "dev:agent": "go run -C Agent ./cmd/server",
     "dev:all": "concurrently -k -n game,agent,medea,frontend \"npm:dev:game-backend\" \"npm:dev:agent\" \"npm:dev:backend\" \"npm:dev:frontend\"",
     "down:all": "node scripts/down-all.mjs",
     "build": "vite build",

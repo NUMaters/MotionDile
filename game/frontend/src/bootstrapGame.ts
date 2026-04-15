@@ -26,7 +26,7 @@ import { initInput, getInputVector, joystick, keys, manualMouthOpen, consumeAtta
 import {
   handState, smoothNeckYaw, smoothNeckPitch,
   updateHandTracking, applyHeadTracking,
-  loadHandControlModel, showTapToStart,
+  loadHandControlModel, activateSensorsFromUserGesture, registerSensorRetryOnWindowTap,
 } from './hand-tracking';
 import { updateDeviceLook, getDeviceLookYawPitch, recenterDeviceLook } from './device-look';
 import {
@@ -637,7 +637,10 @@ btnJoin.addEventListener('click', () => {
   saveStoredPlayerName(playerNameInput.value);
   showScreen('matchmaking');
   updateMatchmaking(1, null);
-  showTapToStart();
+  /** この click がそのまま iOS のモーション／カメラ許可ダイアログに繋がる */
+  activateSensorsFromUserGesture({
+    onCameraFail: registerSensorRetryOnWindowTap,
+  });
   void initMultiplayer();
 });
 

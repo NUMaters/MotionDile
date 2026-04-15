@@ -16,8 +16,8 @@ function boostPreviewMaterials(root: THREE.Object3D): void {
     if (!mesh.isMesh) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const raw of mats) {
-      const m = raw as THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
-      if (!m || (!m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial)) continue;
+      if (!(raw instanceof THREE.MeshStandardMaterial)) continue;
+      const m = raw;
       m.envMapIntensity = Math.max(m.envMapIntensity, 1);
       m.metalness = Math.min(m.metalness, 0.12);
       m.roughness = Math.max(0.35, m.roughness * 0.92);

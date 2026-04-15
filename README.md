@@ -38,9 +38,9 @@
 
 スマホのゲーム画面（`npm run dev` のトップ）では、左端寄り・**画面の縦方向ほぼ中央**の丸い**目**アイコンで、視点を滑らかに正面へ戻したうえで端末の傾き基準を取り直せます（`DEVICE_LOOK_RECENTER_*` / `LOOK_RESET_*`、`device-look.ts`）。左ジョイスティックで**指を内側の円より外へ押し出す**（外側の暗いリング方向）と走行。`rawDist / R` が **1.06 超で入り・1.01 以下で戻り**のヒステリシス。専用の「走る」ボタンはありません。**画面のどこでも短く素早く2回タップ**（ドラグしない）でジャンプ（フラット地形モード時）。PC では `Space` でジャンプできます。PC では引き続き `Shift` で走行できます。ワールド地面は碁盤風（木目調プレーン + `GridHelper`、`divisions=42` で目を細かく）です。
 
-### ハンドトラッキング（初回タップで起動）
+### ハンドトラッキング（ゲーム参加でカメラ・モーション許可）
 
-モデル読み込み後、**画面のどこかの初回タップ**（ジョイスティック操作を含む）で、iOS 向けに **DeviceMotion / DeviceOrientation** の `requestPermission`（`device-look.ts` の同期ラッパー）とカメラ・手認識の開始をまとめて行います（ユーザージェスチャー必須。カメラ許可とは別のシステムダイアログが出る場合があります）。起動に失敗したときは HUD に案内が出るので、**もう一度画面をタップ**して再試行できます。視点は `device-look.ts`（`alpha` なし時は `beta`/`gamma` と `DEVICE_LOOK_TILT_GAIN`）。
+**ゲーム参加**ボタンの `click` と同じユーザージェスチャー内で、iOS 向けに **DeviceMotion / DeviceOrientation** の `requestPermission`（`device-look.ts` で同一ターンに `void` 呼び出しの直後に `deviceorientation` / `devicemotion` を購読）とカメラ・手認識の開始をまとめて行うため、**追加タップなしでモーション許可ダイアログが出ます**（カメラ許可とは別のシステムダイアログが出る場合があります）。カメラだけ失敗したときは HUD の案内どおり**画面をタップして再試行**できます。視点は `device-look.ts`（`alpha` なし時は `beta`/`gamma` と `DEVICE_LOOK_TILT_GAIN`）。
 
 - **口の開閉**: 手の**開き具合**を口の開きに対応（`hand-control-model.json` の **`version`** により計算式が異なる。**v2（推奨・デフォルト）**: 各指の「手首〜指先 / 手首〜MCP」の平均比でパー／グーを判別。**v1（学習済みの従来 JSON）**: 指先〜MCP 距離のカール指標を維持）
 - **首の向き（左右・上下）**: **v2** では**掌の法線**（中指先方向と手の横幅から）でヨー・ピッチを安定取得。**v1** では手首〜中指 MCP の傾き。いずれも特徴量に **EMA**（`HAND_FEATURE_EMA_ALPHA`）をかけ、首ボーンは `HEAD_HAND_TRACK_SMOOTH` で追従
@@ -63,7 +63,7 @@
 - **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
 - **Go + Gin** — `game/backend` の REST API（ルーム参加/退出/スナップショット）
 - **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含め、他クライアントでも呼吸表現を再現。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う
-- **Agent Server (Go + OpenAI gpt-4o-mini)** — `agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
+- **Agent Server (Go + OpenAI gpt-4o-mini)** — `Agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
 - **表示名・投票UI** — 参加時に `displayName` を REST / WebSocket クエリで送信し、`PlayerState` に保存。頭上名は **CSS2DRenderer**（`name-labels.ts`）。スナップショット適用をリモート生成より先に行い、空名は `resolveDisplayName` で補完。ラベル層は **z-index** で WebGL キャンバスより手前（iOS で隠れないよう明示）。投票カードは iOS 等での複数 WebGL コンテキスト不具合を避けるため、**単一の `WebGLRenderer` で各プレイヤー分を順にオフスクリーン描画し JPEG 化**（`vote-previews.ts`）。プレビュー専用に **PMREMGenerator + RoomEnvironment** で `scene.environment` を生成し PBR を明るく表示、カメラは狭い FOV・近い距離で枠内を大きく取る。モデル未読込時は色＋絵文字フォールバック
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与
 - **Vite v6.2** — 開発サーバー・ビルドツール（`@vitejs/plugin-vue` で `.vue` を処理し、`.ts` をトランスパイル）
@@ -187,7 +187,7 @@ WaniAR/
 │   │       ├── world.ts         ← ワールドマップ読み込み・地形・衝突判定
 │   │       ├── character.ts     ← キャラクター読み込み・アニメーション・色替え
 │   │       ├── network.ts       ← WebSocket・REST・マルチプレイ同期
-│   │       └── data/source/Лес.obj  ← ワールドマップ（OBJ）
+│   │       └── data/tex.obj, tex.mtl  ← ワールドマップ（OBJ+MTL、`world.ts` が読み込み）
 │   └── backend/               ← ゲーム同期バックエンド（Go + Gin + WebSocket）
 │       ├── cmd/server/main.go
 │       ├── internal/...
@@ -201,7 +201,7 @@ WaniAR/
 │   ├── scripts/
 │   │   └── build-wani-game-model.mjs  ← モデル生成パイプライン
 │   └── Meshy_AI_…_fbx/       ← 参考用 FBX + テクスチャ
-├── agent/                     ← AIヒント生成マイクロサービス（Go + OpenAI）
+├── Agent/                     ← AIヒント生成マイクロサービス（Go + OpenAI）
 │   ├── cmd/server/main.go     ← エントリポイント
 │   ├── internal/
 │   │   ├── config/            ← .env 読み込み・設定管理
