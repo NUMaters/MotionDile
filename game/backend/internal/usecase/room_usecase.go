@@ -33,7 +33,7 @@ type JoinInput struct {
 	DisplayName string
 }
 
-type MovaeInput struct {
+type MoveInput struct {
 	RoomID        string
 	PlayerID      string
 	X             float64 `json:"x"`
@@ -49,10 +49,22 @@ type MovaeInput struct {
 	IdleRoll      float64 `json:"idleRoll"`
 }
 
+// GameRules はゲームの共通パラメータ。gateway 定数と一致させること。
+type GameRules struct {
+	GameDurationSec int
+	MapRadius       float64
+}
+
+var DefaultGameRules = GameRules{
+	GameDurationSec: 60,
+	MapRadius:       1.3,
+}
+
 type RoomUsecase struct {
 	repo     repository.RoomRepository
 	agentURL string
 	hc       *http.Client
+	rules    GameRules
 }
 
 func NewRoomUsecase(repo repository.RoomRepository, agentURL string) *RoomUsecase {
@@ -60,6 +72,7 @@ func NewRoomUsecase(repo repository.RoomRepository, agentURL string) *RoomUsecas
 		repo:     repo,
 		agentURL: agentURL,
 		hc:       &http.Client{Timeout: 6 * time.Second},
+		rules:    DefaultGameRules,
 	}
 }
 
@@ -307,16 +320,16 @@ func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum i
 		if remaining < 0 {
 			remaining = 0
 		}
-		elapsed := (60 * time.Second) - remaining
+		elapsed := (time.Duration(u.rules.GameDurationSec) * time.Second) - remaining
 		elapsedSec = int(elapsed.Seconds())
 	}
 
 	reqBody := agentHintRequest{
 		RoomID:       roomID,
 		HintNumber:   hintNum,
-		GameDuration: 60,
+		GameDuration: u.rules.GameDurationSec,
 		ElapsedSec:   elapsedSec,
-		MapRadius:    1.3,
+		MapRadius:    u.rules.MapRadius,
 		AllyTheme:    gs.AllyTheme,
 		EnemyTheme:   gs.EnemyTheme,
 		Players:      players,

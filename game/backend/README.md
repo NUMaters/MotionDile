@@ -15,11 +15,13 @@ REST API は部屋/プレイヤー管理、WebSocket は部屋内の移動同期
 
 ## REST API
 
-- `GET /healthz`
-- `POST /api/v1/rooms/:roomID/players`
-  - body: `{ "playerId": "p1" }`
-- `GET /api/v1/rooms/:roomID/snapshot`
-- `DELETE /api/v1/rooms/:roomID/players/:playerID`
+- `GET /healthz` — ヘルスチェック
+- `POST /api/v1/rooms/resolve` — 待機中の部屋を検索・割り当て（なければ新規作成）
+  - body: `{ "preferredRoomId": "", "excludeRoomId": "" }`
+- `POST /api/v1/rooms/:roomID/players` — 部屋に参加
+  - body: `{ "playerId": "p1", "displayName": "Alice" }`
+- `GET /api/v1/rooms/:roomID/snapshot` — 部屋のスナップショット取得
+- `DELETE /api/v1/rooms/:roomID/players/:playerID` — 退出
 
 ## 敵ワニ（敵陣営）の抽選
 
@@ -52,3 +54,11 @@ go run ./cmd/server
 ```
 
 デフォルトは `127.0.0.1:8090`。`GAME_BACKEND_ADDR` で変更できます。
+
+## 環境変数
+
+| 変数 | 説明 | デフォルト |
+|------|------|-----------|
+| `GAME_BACKEND_ADDR` | リッスンアドレス | `127.0.0.1:8090` |
+| `AGENT_URL` | Agent サーバーの URL | `http://127.0.0.1:8091` |
+| `WS_ALLOWED_ORIGINS` | WebSocket 許可オリジン（カンマ区切り。空 or `*` で全許可） | `*`（開発用） |

@@ -5,10 +5,13 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,14 +110,33 @@ func NewGateway(uc *usecase.RoomUsecase) *Gateway {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(_ *http.Request) bool {
-				return true
-			},
+			CheckOrigin:     buildCheckOrigin(),
 		},
 		usecase:   uc,
 		rooms:     make(map[string]map[*Client]struct{}),
 		gameCtxs:  make(map[string]*roomGameCtx),
 		landmarks: make(map[string][]usecase.LandmarkInfo),
+	}
+}
+
+// buildCheckOrigin は WS_ALLOWED_ORIGINS 環境変数でオリジン制限を構築する。
+// 未設定・空・"*" の場合は全許可（開発用）。カンマ区切りで複数指定可。
+func buildCheckOrigin() func(r *http.Request) bool {
+	raw := strings.TrimSpace(os.Getenv("WS_ALLOWED_ORIGINS"))
+	if raw == "" || raw == "*" {
+		return func(_ *http.Request) bool { return true }
+	}
+	allowed := make(map[string]struct{})
+	for _, o := range strings.Split(raw, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowed[o] = struct{}{}
+		}
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		_, ok := allowed[origin]
+		return ok
 	}
 }
 
@@ -133,7 +155,13 @@ func (g *Gateway) Handle(c *gin.Context) {
 		DisplayName: displayName,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "message": err.Error()})
+		code := http.StatusBadRequest
+		errCode := "INVALID_INPUT"
+		if errors.Is(err, usecase.ErrGameInProgress) {
+			code = http.StatusConflict
+			errCode = "GAME_IN_PROGRESS"
+		}
+		c.JSON(code, gin.H{"ok": false, "code": errCode, "message": err.Error()})
 		return
 	}
 
@@ -315,15 +343,23 @@ func (g *Gateway) register(client *Client) {
 
 func (g *Gateway) unregister(client *Client) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	roomClients, ok := g.rooms[client.roomID]
 	if !ok {
+		g.mu.Unlock()
 		return
 	}
 	delete(roomClients, client)
 	close(client.send)
-	if len(roomClients) == 0 {
+	empty := len(roomClients) == 0
+	if empty {
 		delete(g.rooms, client.roomID)
+	}
+	g.mu.Unlock()
+
+	if empty {
+		g.landmarksMu.Lock()
+		delete(g.landmarks, client.roomID)
+		g.landmarksMu.Unlock()
 	}
 }
 
@@ -530,7 +566,7 @@ func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
 			if err != nil {
 				log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
 			} else {
-				log.Printf("[ws] broadcasting hint #%d to room %s: %s", hintNum, roomID, hint.Text)
+				log.Printf("[ws] broadcasting hint #%d to room %s (len=%d)", hintNum, roomID, len(hint.Text))
 				g.broadcastToRoom(roomID, genericEnvelope{Type: "hint", Payload: hint})
 			}
 		case <-gameTimer.C:
