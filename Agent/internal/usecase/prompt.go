@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"agent/internal/evidence"
+	"agent/internal/policy"
 )
 
 const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェントです。
@@ -35,7 +36,7 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 - 他プレイヤーとの距離感（孤立している、群れから離れている、誰かの近くにいる）
 - 移動方向（北に向かっている、境界に向かって走っている）`
 
-func buildUserPrompt(ev evidence.HintEvidence) string {
+func buildUserPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) string {
 	if ev.Enemy == nil {
 		return "敵の情報がありません。「情報収集中…」と答えてください。"
 	}
@@ -43,103 +44,135 @@ func buildUserPrompt(ev evidence.HintEvidence) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("ヒント番号: %d（%d番目のヒント） / ゲーム経過: %d秒 / ゲーム時間: %d秒\n",
 		ev.Request.HintNumber, ev.Request.HintNumber, ev.Request.ElapsedSec, ev.Request.GameDuration))
+	sb.WriteString(fmt.Sprintf("→ 具体度: %s / 主軸: %s\n", formatSpecificity(hintPolicy.Specificity), formatFocus(hintPolicy.PrimaryFocus)))
+	sb.WriteString(fmt.Sprintf("→ 使ってよい情報: %s\n", strings.Join(allowedSignalLabels(hintPolicy), "、")))
+	sb.WriteString("→ 禁止: 名前、色、数値距離、個人特定につながる表現\n\n")
 
-	if ev.Request.HintNumber <= 1 {
-		sb.WriteString("→ 序盤なので「曖昧」なヒントにしてください\n\n")
-	} else if ev.Request.HintNumber == 2 {
-		sb.WriteString("→ 中盤なので「やや具体的」なヒントにしてください\n\n")
-	} else {
-		sb.WriteString("→ 終盤なので「かなり具体的」なヒントにしてください\n\n")
-	}
-
-	sb.WriteString("【敵ワニの状態】\n")
-	sb.WriteString(formatPlayerFull(*ev.Enemy))
-	sb.WriteString("\n")
-
-	if len(ev.Citizens) > 0 {
-		sb.WriteString("【市民プレイヤーの状態】\n")
-		for i := range ev.Citizens {
-			sb.WriteString(fmt.Sprintf("- %s: %s\n",
-				ev.Citizens[i].Source.DisplayName,
-				formatBrief(ev.Citizens[i]),
-			))
-		}
+	sb.WriteString("【敵ワニの観測事実】\n")
+	for _, line := range describeEnemyForPrompt(ev, hintPolicy) {
+		sb.WriteString("- ")
+		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
 
-	if ev.NearestCitizen != nil {
-		sb.WriteString(fmt.Sprintf("敵に最も近い市民: %s（距離 %.2f）\n",
-			ev.NearestCitizen.Player.Source.DisplayName,
-			ev.NearestCitizen.Distance,
-		))
-	}
-
-	if ev.EnemyIsIsolated {
-		sb.WriteString("※敵ワニは他のプレイヤーから孤立しています\n")
-	}
-
-	sb.WriteString("\n1〜2文のヒントを1つだけ生成してください。敵の名前や色は出さないでください。")
+	sb.WriteString("\n1〜2文のヒントを1つだけ生成してください。")
+	sb.WriteString(" 主軸に沿って組み立て、使ってよい情報だけを採用してください。")
 	sb.WriteString(" 前置き・役割名・見出しは付けず、本文のみ1行で出力してください。")
 	return sb.String()
 }
 
-func formatPlayerFull(player evidence.PlayerEvidence) string {
-	lines := fmt.Sprintf(
-		"  位置: %s\n  行動: %s\n  向き: %s\n  場所の特徴: %s\n",
-		formatZone(player.Zone),
-		formatMotion(player.Motion),
-		formatFacing(player.Facing),
-		formatLocation(player.Environment, player.Motion),
-	)
-
-	if player.Motion.IsAirborneByAnimTag {
-		lines += "  ※ジャンプ中（空中にいる可能性）\n"
+func describeEnemyForPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) []string {
+	lines := []string{}
+	if ev.Enemy == nil {
+		return lines
 	}
-	if player.MouthOpen {
-		lines += "  ※口を開けている（威嚇的な状態）\n"
+
+	enemy := *ev.Enemy
+	if hintPolicy.Signals.UseMotion {
+		lines = append(lines, "行動: "+formatMotion(enemy.Motion, hintPolicy.Signals.UseMouth))
+	}
+	if hintPolicy.Signals.UseAirborne && enemy.Motion.IsAirborneByAnimTag {
+		lines = append(lines, "補助特徴: ジャンプしている様子")
+	}
+	if hintPolicy.Signals.UseZone {
+		lines = append(lines, "位置: "+formatZone(enemy.Zone, hintPolicy.Specificity))
+	}
+
+	environmentParts := []string{}
+	if hintPolicy.Signals.UseNearWall && enemy.Environment.NearWall {
+		environmentParts = append(environmentParts, "境界の壁際")
+	}
+	if hintPolicy.Signals.UseLandmark {
+		near := formatNearbyLandmark(enemy.Environment.NearbyLandmark)
+		if near != "" {
+			environmentParts = append(environmentParts, near)
+		}
+	}
+	if len(environmentParts) > 0 {
+		lines = append(lines, "周辺: "+strings.Join(environmentParts, "、"))
+	}
+
+	if hintPolicy.Signals.UseFacing {
+		lines = append(lines, "向き: "+formatFacing(enemy.Facing))
+	}
+	if hintPolicy.Signals.UseRelation {
+		relation := formatRelation(ev)
+		if relation != "" {
+			lines = append(lines, "関係性: "+relation)
+		}
 	}
 
 	return lines
 }
 
-func formatBrief(player evidence.PlayerEvidence) string {
-	extras := ""
-	if player.Motion.IsAirborneByAnimTag {
-		extras += " [ジャンプ]"
+func orderedHintParts(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) []string {
+	if ev.Enemy == nil {
+		return nil
 	}
-	if player.MouthOpen {
-		extras += " [口開]"
+
+	movement := ""
+	if hintPolicy.Signals.UseMotion {
+		movement = formatMotion(ev.Enemy.Motion, hintPolicy.Signals.UseMouth)
 	}
-	near := formatNearbyLandmark(player.Environment.NearbyLandmark)
-	if near != "" {
-		extras += " [" + near + "]"
+	if hintPolicy.Signals.UseAirborne && ev.Enemy.Motion.IsAirborneByAnimTag {
+		if movement != "" {
+			movement += "、ジャンプ気味"
+		} else {
+			movement = "ジャンプ気味"
+		}
 	}
-	return fmt.Sprintf("%s で %s%s", formatZone(player.Zone), formatMotion(player.Motion), extras)
+
+	locationParts := []string{}
+	if hintPolicy.Signals.UseZone {
+		locationParts = append(locationParts, formatZone(ev.Enemy.Zone, hintPolicy.Specificity))
+	}
+	if hintPolicy.Signals.UseNearWall && ev.Enemy.Environment.NearWall {
+		locationParts = append(locationParts, "壁際")
+	}
+	if hintPolicy.Signals.UseLandmark {
+		if near := formatNearbyLandmark(ev.Enemy.Environment.NearbyLandmark); near != "" {
+			locationParts = append(locationParts, near)
+		}
+	}
+	location := strings.Join(locationParts, "の")
+
+	relation := ""
+	if hintPolicy.Signals.UseRelation {
+		relation = formatRelation(ev)
+	}
+
+	facing := ""
+	if hintPolicy.Signals.UseFacing {
+		facing = formatFacing(ev.Enemy.Facing)
+	}
+
+	switch hintPolicy.PrimaryFocus {
+	case policy.FocusLocation:
+		return compactHintParts(location, movement, relation, facing)
+	case policy.FocusRelation:
+		return compactHintParts(relation, movement, location, facing)
+	default:
+		return compactHintParts(movement, location, relation, facing)
+	}
 }
 
-func formatLocation(environment evidence.EnvironmentEvidence, motion evidence.MotionEvidence) string {
-	parts := []string{}
-	if environment.NearWall {
-		parts = append(parts, "境界の壁付近")
+func compactHintParts(parts ...string) []string {
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		result = append(result, part)
 	}
-	if environment.NearCenter {
-		parts = append(parts, "マップ中央の開けた場所")
-	}
-	if motion.IsAirborneByAnimTag {
-		parts = append(parts, "空中（ジャンプ中の可能性）")
-	}
-	near := formatNearbyLandmark(environment.NearbyLandmark)
-	if near != "" {
-		parts = append(parts, near)
-	}
-	if len(parts) == 0 {
-		return "通常の地面付近"
-	}
-	return strings.Join(parts, "、")
+	return result
 }
 
-func formatZone(zone evidence.ZoneEvidence) string {
+func formatZone(zone evidence.ZoneEvidence, specificity policy.HintSpecificity) string {
 	proximity := formatProximity(zone.Proximity)
+	if specificity == policy.SpecificityLow {
+		return proximity + "付近"
+	}
+
 	direction := formatZoneDirection(zone)
 	if direction == "" {
 		return proximity + "エリア"
@@ -180,15 +213,15 @@ func formatZoneDirection(zone evidence.ZoneEvidence) string {
 	return ns + ew
 }
 
-func formatMotion(motion evidence.MotionEvidence) string {
+func formatMotion(motion evidence.MotionEvidence, useMouth bool) string {
 	switch motion.Kind {
 	case evidence.MotionRun:
-		if motion.UsesMouthAnimation {
+		if useMouth && motion.UsesMouthAnimation {
 			return "口を開けて走行中"
 		}
 		return "走行中"
 	case evidence.MotionWalk:
-		if motion.UsesMouthAnimation {
+		if useMouth && motion.UsesMouthAnimation {
 			return "口を開けて歩行中"
 		}
 		return "歩行中"
@@ -197,7 +230,7 @@ func formatMotion(motion evidence.MotionEvidence) string {
 	case evidence.MotionTailWag:
 		return "尻尾を振っている"
 	case evidence.MotionIdle:
-		if motion.UsesMouthAnimation {
+		if useMouth && motion.UsesMouthAnimation {
 			return "口を開けて静止中"
 		}
 		return "静止中"
@@ -241,4 +274,80 @@ func formatNearbyLandmark(landmark evidence.LandmarkEvidence) string {
 	default:
 		return ""
 	}
+}
+
+func formatRelation(ev evidence.HintEvidence) string {
+	if ev.EnemyIsIsolated {
+		return "他プレイヤーから少し孤立している"
+	}
+	if ev.NearestCitizen == nil {
+		return ""
+	}
+	switch {
+	case ev.NearestCitizen.Distance < 0.25:
+		return "誰かのすぐ近くにいる"
+	case ev.NearestCitizen.Distance < 0.4:
+		return "誰かの近くにいる"
+	default:
+		return ""
+	}
+}
+
+func formatSpecificity(specificity policy.HintSpecificity) string {
+	switch specificity {
+	case policy.SpecificityLow:
+		return "低い（曖昧）"
+	case policy.SpecificityMedium:
+		return "中くらい"
+	case policy.SpecificityHigh:
+		return "高い（ただし特定禁止）"
+	default:
+		return "不明"
+	}
+}
+
+func formatFocus(focus policy.HintFocus) string {
+	switch focus {
+	case policy.FocusMovement:
+		return "行動"
+	case policy.FocusLocation:
+		return "位置"
+	case policy.FocusRelation:
+		return "関係性"
+	default:
+		return "不明"
+	}
+}
+
+func allowedSignalLabels(hintPolicy policy.HintPolicy) []string {
+	labels := []string{}
+	if hintPolicy.Signals.UseMotion {
+		labels = append(labels, "行動")
+	}
+	if hintPolicy.Signals.UseMouth {
+		labels = append(labels, "口の開き")
+	}
+	if hintPolicy.Signals.UseAirborne {
+		labels = append(labels, "ジャンプ")
+	}
+	if hintPolicy.Signals.UseZone {
+		if hintPolicy.Specificity == policy.SpecificityLow {
+			labels = append(labels, "粗い位置")
+		} else {
+			labels = append(labels, "位置")
+		}
+	}
+	if hintPolicy.Signals.UseNearWall {
+		labels = append(labels, "壁際")
+	}
+	if hintPolicy.Signals.UseLandmark {
+		labels = append(labels, "ランドマーク近接")
+	}
+	if hintPolicy.Signals.UseFacing {
+		labels = append(labels, "向き")
+	}
+	if hintPolicy.Signals.UseRelation {
+		labels = append(labels, "関係性")
+	}
+	return labels
 }
