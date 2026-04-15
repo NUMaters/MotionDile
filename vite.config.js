@@ -1,6 +1,7 @@
 import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from 'fs';
 import { extname, join, resolve } from 'path';
 import basicSsl from '@vitejs/plugin-basic-ssl';
+import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 
 /**
@@ -147,6 +148,7 @@ function copyMedeaPipelineToDist() {
 
 export default defineConfig({
   plugins: [
+    vue(),
     basicSsl(),
     syncWaniGlbToPublic(),
     modelingDevStatic(),

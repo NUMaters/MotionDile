@@ -58,14 +58,15 @@
 - **@gltf-transform/core v4.3** — glTF/GLB ファイルのプログラム的な加工・生成
 - **glTF 2.0 (GLB)** — 3D モデルフォーマット（スキンメッシュ + ボーンアニメーション）
 - **medea-pipeline（独自）** — 手ジェスチャー学習データ収集・パラメータ学習・ゲーム反映
-- **TypeScript v5.8** — ゲーム本体（`game/frontend/src/main.ts`）と学習スクリプト（`medea-pipeline/scripts/train-hand-control-model.ts`）の型付け
+- **Vue 3** — ゲーム UI シェル（単一ファイルコンポーネント `App.vue`）。マウント後に Three.js ゲーム本体（`bootstrapGame.ts`）を動的 import し、DOM（`#game-canvas` 等）は従来どおり ID 参照で操作
+- **TypeScript v5.8** — フロント（`game/frontend/src/*.ts` / `*.vue`）と学習スクリプト（`medea-pipeline/scripts/train-hand-control-model.ts`）の型付け
 - **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
 - **Go + Gin** — `game/backend` の REST API（ルーム参加/退出/スナップショット）
 - **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含め、他クライアントでも呼吸表現を再現。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う
 - **Agent Server (Go + OpenAI gpt-4o-mini)** — `agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
 - **表示名・投票UI** — 参加時に `displayName` を REST / WebSocket クエリで送信し、`PlayerState` に保存。頭上名は **CSS2DRenderer**（`name-labels.ts`）。スナップショット適用をリモート生成より先に行い、空名は `resolveDisplayName` で補完。ラベル層は **z-index** で WebGL キャンバスより手前（iOS で隠れないよう明示）。投票カードは iOS 等での複数 WebGL コンテキスト不具合を避けるため、**単一の `WebGLRenderer` で各プレイヤー分を順にオフスクリーン描画し JPEG 化**（`vote-previews.ts`）。プレビュー専用に **PMREMGenerator + RoomEnvironment** で `scene.environment` を生成し PBR を明るく表示、カメラは狭い FOV・近い距離で枠内を大きく取る。モデル未読込時は色＋絵文字フォールバック
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与
-- **Vite v6.2** — 開発サーバー・ビルドツール（`.ts` をそのままトランスパイル）
+- **Vite v6.2** — 開発サーバー・ビルドツール（`@vitejs/plugin-vue` で `.vue` を処理し、`.ts` をトランスパイル）
 - **serve** — 静的 HTTP サーバー（ビューア配信）
 - **`game/frontend/src/config.ts`** — ゲーム定数の集約。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_FEATURE_EMA_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker 公式 **float16** `.task` と WASM／GPU・CPU フォールバック、検出しきい値は任意）
 
@@ -171,7 +172,10 @@ WaniAR/
 ├── game/
 │   ├── frontend/
 │   │   └── src/
-│   │       ├── main.ts          ← ゲームループ・起動オーケストレーター
+│   │       ├── main.ts          ← Vue アプリのマウント（エントリ）
+│   │       ├── App.vue          ← 画面 DOM（ローディング・各スクリーン・ジョイスティック等）
+│   │       ├── styles/app.css   ← ゲーム UI のグローバルスタイル
+│   │       ├── bootstrapGame.ts ← Three.js ゲームループ・起動オーケストレーター
 │   │       ├── types.ts         ← 共有型定義
 │   │       ├── config.ts        ← 定数・設定値
 │   │       ├── utils.ts         ← 汎用ユーティリティ関数
@@ -214,7 +218,7 @@ WaniAR/
 │   ├── data/                  ← 収集データ（JSON）
 │   ├── models/                ← 学習済みモデル（ミラー）
 │   └── scripts/train-hand-control-model.ts
-├── index.html                ← Vite エントリ（`/game/frontend/src/main.ts` を読み込み）
+├── index.html                ← Vite エントリ（`#app` に Vue をマウント → `main.ts`）
 ├── public/models/             ← ゲームが読み込む hand-control-model.json
 ├── vite.config.js
 ├── package.json

@@ -262,7 +262,7 @@ func (u *RoomUsecase) fallbackHint(hintNum int, snap entity.RoomSnapshot, gs ent
 		if p.PlayerID == gs.EnemyPlayerID {
 			zone := fallbackZone(p.X, p.Z)
 			movement := fallbackMovement(p.Animation)
-			return entity.HintInfo{Number: hintNum, Text: fmt.Sprintf("通報: %sで不審な%sを確認", zone, movement)}
+			return entity.HintInfo{Number: hintNum, Text: fmt.Sprintf("%sで不審な%sを確認", zone, movement)}
 		}
 	}
 	return entity.HintInfo{Number: hintNum, Text: "情報収集中…しばらくお待ちください"}
