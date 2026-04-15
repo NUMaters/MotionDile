@@ -147,6 +147,17 @@ function copyMedeaPipelineToDist() {
 }
 
 export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['game/frontend/src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      reportsDirectory: 'coverage/frontend',
+      include: ['game/frontend/src/**/*.{ts,tsx,vue}'],
+      exclude: ['game/frontend/src/**/*.test.ts', 'game/frontend/src/env.d.ts'],
+    },
+  },
   plugins: [
     vue(),
     basicSsl(),

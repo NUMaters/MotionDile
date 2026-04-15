@@ -12,7 +12,17 @@
     "dev:all": "concurrently -k -n game,agent,frontend \"npm:dev:game-backend\" \"npm:dev:agent\" \"npm:dev\"",
     "down:all": "node scripts/down-all.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:clear-cache": "node -e \"require('node:fs').rmSync('node_modules/.vitest', { recursive: true, force: true })\"",
+    "test:clear-coverage": "node -e \"const fs=require('node:fs'); fs.rmSync('coverage', { recursive: true, force: true }); fs.rmSync('game/backend/coverage.out', { force: true });\"",
+    "test": "npm run test:clear-cache && npm run test:clear-coverage && vitest run --coverage",
+    "test:watch": "vitest",
+    "test:backend:clear-cache": "go clean -C game/backend -cache -testcache",
+    "test:backend": "npm run test:backend:clear-cache && sh -c \"cd game/backend && go test ./... -coverprofile=coverage.out -covermode=atomic && go tool cover -func=coverage.out\"",
+    "test:all": "npm run test && npm run test:backend",
+    "cmake:configure": "cmake -S . -B build -DCMAKE_BUILD_TYPE=Release",
+    "cmake:build": "cmake --build build",
+    "cmake:all": "npm run cmake:configure && npm run cmake:build"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.34",
@@ -26,11 +36,14 @@
     "@types/three": "^0.175.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vitest/coverage-v8": "^3.2.4",
     "concurrently": "^9.2.1",
+    "happy-dom": "^20.9.0",
     "kill-port": "^2.0.1",
     "serve": "^14.2.4",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3",
-    "vite": "^6.2.5"
+    "vite": "^6.2.5",
+    "vitest": "^3.2.4"
   }
 }

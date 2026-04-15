@@ -2,6 +2,29 @@
 
 ワニの 3D モデル調整・プレビューは **`modeling/`** に集約しています（ソース GLB、生成パイプライン、`viewer.html`）。ゲーム本体のビルドはリポジトリルートの Vite などを利用します。
 
+## CMake（ネイティブ）
+
+将来の C/C++ 連携や CI でのビルド検証用に、リポジトリルートに **CMake 3.20+** を置いています（**C11**）。`native/` に最小の静的ライブラリ `waniar_native` とチェック用実行ファイル `waniar_native_check` があります。`build/` は生成物用で `.gitignore` 済みです。CMake 未導入の環境では macOS なら `brew install cmake` を参照してください。
+
+| コマンド | 内容 |
+|---|---|
+| `npm run cmake:configure` | `cmake -S . -B build`（`-DCMAKE_BUILD_TYPE=Release`） |
+| `npm run cmake:build` | `cmake --build build` |
+| `npm run cmake:all` | 上記を続けて実行 |
+
+手動の例: `cmake -S . -B build && cmake --build build` → 実行ファイルのパスはジェネレータにより `build/native/waniar_native_check` または `build/waniar_native_check` など。`CMAKE_EXPORT_COMPILE_COMMANDS=ON` により `build/compile_commands.json` が出力され、clangd 等で参照できます。
+
+## テスト
+
+| コマンド | 内容 |
+|---|---|
+| `npm run test` | フロント（Vitest・Node 環境）。毎回 `node_modules/.vitest` と `coverage/` を削除してから `--coverage` 付きで `game/frontend/src/**/*.test.ts` を実行（`utils`・`game-rules`・`neck-sync`・`player-names`・`icons`・`ui-layout` など） |
+| `npm run test:watch` | 上記をウォッチモード |
+| `npm run test:backend` | `go clean -C game/backend -cache -testcache` 後に `game/backend` で `go test ./... -coverprofile=coverage.out` を実行し、`go tool cover -func=coverage.out` で集計を表示 |
+| `npm run test:all` | Vitest のあとバックエンド Go を続けて実行 |
+
+`game-rules` のテストでは `config.ts` がブラウザ API（`window`）に依存するため、`GAME_RULES` を `vi.mock('./config')` で差し替えています。`player-names` / `ui-layout` は `localStorage` や `document` / `window` をテスト内でスタブしています。`icons` と `name-labels` は DOM API を使うため、当該テストは **happy-dom** 環境（ファイル先頭の `@vitest-environment`）で実行します。首の相対回転は `neck-sync.ts` の `composeNeckDeltaQuaternion`（`ZXY`）を Three.js で検証します。バックエンドは `internal/config` で `WANIAR_*` を `t.Setenv` し、`internal/usecase` で `Join` に加えて `ResolveLobbyRoom` / `Move` / `TallyVotes` のフロー、`internal/domain/entity` でプレイヤー色配列、`internal/infrastructure/memory` で in-memory リポジトリの Join/Upsert/Vote/RoomID ソート、`PickThemes` の味方/敵テーマ不一致を Go で検証します。
+
 ## アニメーションクリップ
 
 `Wani_game.glb` には以下の 8 クリップが含まれています:
@@ -63,9 +86,9 @@
 - **TypeScript v5.8** — フロント（`game/frontend/src/*.ts` / `*.vue`）と学習スクリプト（`medea-pipeline/scripts/train-hand-control-model.ts`）の型付け
 - **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
 - **Go + Gin** — `game/backend` の REST API（`POST /api/v1/rooms/resolve` で `preferredRoomId` が空なら**待機中の部屋を検索して割り当て、なければ新規作成**。`excludeRoomId` を付けると（自動検索時）その ID の待機ルームはスキップし、**ゲーム終了後の再参加で直前の部屋に戻らない**ようにできる。特定の部屋を指定した場合はその部屋が待機・カウントダウン中ならその ID、対戦中等なら別の待機可能な部屋 ID を返却。`POST /api/v1/rooms/:roomID/players` で参加、退出、スナップショット）
-- **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含め、他クライアントでも呼吸表現を再現。対戦中は `gateway.go` が `WANIAR_HINT_INTERVAL_SEC`（既定 **15 秒**）ごとに Agent ヒントを `hint` で配信。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う。**敵ワニ抽選**は `startGame` で WebSocket 接続中のユニーク `playerId` から **`crypto/rand` で一様に 1 人**を選ぶ（`game/backend/README.md` 参照）
+- **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに `neckYaw` / `neckPitch`（手トラッキング由来の首）と待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含める。リモート側の首姿勢はローカルと同じ **`Euler` 順 `ZXY`（`composeNeckDeltaQuaternion`）**で頭ボーンに適用する（`YXZ` で組むと首だけ大きく崩れるため統一が必要）。対戦中は `gateway.go` が `WANIAR_HINT_INTERVAL_SEC`（既定 **15 秒**）ごとに Agent ヒントを `hint` で配信。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う。**敵ワニ抽選**は `startGame` で WebSocket 接続中のユニーク `playerId` から **`crypto/rand` で一様に 1 人**を選ぶ（`game/backend/README.md` 参照）
 - **Agent Server (Go + OpenAI gpt-4o-mini)** — `Agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
-- **表示名・投票UI** — 参加時に `displayName` を REST / WebSocket クエリで送信し、`PlayerState` に保存。頭上名は **CSS2DRenderer**（`name-labels.ts`）。スナップショット適用をリモート生成より先に行い、空名は `resolveDisplayName` で補完。ラベル層は **z-index** で WebGL キャンバスより手前（iOS で隠れないよう明示）。**プレイ中に後から入室したプレイヤー**は REST の部屋メンバーには載るが、`game_start` 時点の WebSocket 接続者だけを `GameState.roundPlayerIds` に記録し、**投票対象・投票者数・敵抽選・Agent ヒントの対象プレイヤー**はこのラウンド参加者に限定する（`gateway.go` / `room_usecase.go`）。**プレイヤー識別色**は `entity/player_state.go` の高彩度 `PlayerColors`（**青系はワニ本体と区別しづらいため含めない**）を割り当て、`character.ts` の `BODY_TINT_MAP_BLEND` / `BODY_TINT_SOLID_BLEND` と emissive でワニに乗せる（PBR に加え Lambert/Phong も対象。口内メッシュの色スキップはピンク系に限定し体表の誤判定を防ぐ）。`network.ts` の `applyLocalPlayerColorTint` で割当 hex が更新されたとき体へ再適用する。待機 UI のドット色と同じ hex を `name-labels.ts` の CSS2D ラベル枠（`applyPlayerLabelAccent`）にも用い、体色と表示を揃える。`vote_result` WebSocket には `entity.VoteResult` として `enemyColor`（`TallyVotes` がスナップショットから取得）を含め、**結果画面**でも投票カードと同じ `mountVotePreviews` で敵ワニのオフスクリーン画像を表示する（`screens.ts` の `showResults`）。投票カードは iOS 等での複数 WebGL コンテキスト不具合を避けるため、**単一の `WebGLRenderer` で各プレイヤー分を順にオフスクリーン描画し JPEG 化**（`vote-previews.ts`）。プレビュー専用に **PMREMGenerator + RoomEnvironment** で `scene.environment` を生成し PBR を明るく表示、カメラは狭い FOV・近い距離で枠内を大きく取る。モデル未読込時は色＋絵文字フォールバック
+- **表示名・投票UI** — 参加時に `displayName` を REST / WebSocket クエリで送信し、`PlayerState` に保存。**他プレイヤー**の頭上名のみ **CSS2DRenderer**（`name-labels.ts`、**自キャラには名前ラベルを付けない**）。スナップショット適用をリモート生成より先に行い、空名は `resolveDisplayName` で補完。ラベル層は **z-index** で WebGL キャンバスより手前（iOS で隠れないよう明示）。**プレイ中に後から入室したプレイヤー**は REST の部屋メンバーには載るが、`game_start` 時点の WebSocket 接続者だけを `GameState.roundPlayerIds` に記録し、**投票対象・投票者数・敵抽選・Agent ヒントの対象プレイヤー**はこのラウンド参加者に限定する（`gateway.go` / `room_usecase.go`）。**プレイヤー識別色**は `entity/player_state.go` の高彩度 `PlayerColors`（**青系はワニ本体と区別しづらいため含めない**）を割り当て、`character.ts` の `BODY_TINT_MAP_BLEND` / `BODY_TINT_SOLID_BLEND` と emissive でワニに乗せる（PBR に加え Lambert/Phong も対象。口内メッシュの色スキップはピンク系に限定し体表の誤判定を防ぐ）。`network.ts` の `applyLocalPlayerColorTint` で割当 hex が更新されたとき体へ再適用する。待機 UI のドット色と同じ hex を `name-labels.ts` の CSS2D ラベル枠（`applyPlayerLabelAccent`）にも用い、体色と表示を揃える。`vote_result` WebSocket には `entity.VoteResult` として `enemyColor`（`TallyVotes` がスナップショットから取得）を含め、**結果画面**でも投票カードと同じ `mountVotePreviews` で敵ワニのオフスクリーン画像を表示する（`screens.ts` の `showResults`）。投票カードは iOS 等での複数 WebGL コンテキスト不具合を避けるため、**単一の `WebGLRenderer` で各プレイヤー分を順にオフスクリーン描画し JPEG 化**（`vote-previews.ts`、体揺れは付けず静止サムネ）。プレビュー専用に **PMREMGenerator + RoomEnvironment** で `scene.environment` を生成し PBR を明るく表示、カメラは狭い FOV・近い距離で枠内を大きく取る。モデル未読込時は色＋絵文字フォールバック
 - **行動テーマシステム** — ゲーム開始時に市民チームと敵ワニにそれぞれ異なる「行動ミッション（テーマ）」をランダム割り当て（`usecase/themes.go`）。例:「障害物の近くを移動する」「マップの外周を歩き回る」等。各プレイヤーには自分のテーマのみ表示され、陣営は直接通知されない。プレイヤーはテーマに沿って行動しつつ、**異なる動きをしている敵ワニ**を探す。テーマは `game_start` WebSocket メッセージで各クライアントに送信、`GameState` に `AllyTheme`/`EnemyTheme` として保存される
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、**市民テーマと敵テーマの両方**を受け取り、敵の行動がテーマと合わないことを示唆するヒントを生成。ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与。フロントは `screens.ts` の `showHint` が Web Animations API で、**行動テーマバッジ直下**（`#agent-hint-danmaku`）へ**弾幕風の横スクロール**で表示（従来の画面中央ポップアップは廃止）
 - **Vite v6.2** — 開発サーバー・ビルドツール（`@vitejs/plugin-vue` で `.vue` を処理し、`.ts` をトランスパイル）
@@ -170,6 +193,8 @@ npm run pipeline:train:example  # サンプルデータから手モデル生成�
 
 ```
 WaniAR/
+├── CMakeLists.txt          ← CMake ルート（`native/` サブディレクトリ）
+├── native/                 ← C11 スタブ（静的 lib + `waniar_native_check`）
 ├── game/
 │   ├── frontend/
 │   │   └── src/
@@ -184,6 +209,7 @@ WaniAR/
 │   │       ├── scene.ts         ← Three.js シーン・カメラ・ライト初期化
 │   │       ├── input.ts         ← キーボード・ジョイスティック・画面ダブルタップ（ジャンプ）
 │   │       ├── hand-tracking.ts ← MediaPipe 手認識・カメラ・首制御
+│   │       ├── neck-sync.ts     ← 首ピッチ/ヨーから相対クォータニオン（`ZXY`、ネット同期と共通）
 │   │       ├── device-look.ts   ← スマホジャイロで三人称カメラ視点
 │   │       ├── world.ts         ← ワールドマップ読み込み・地形・衝突判定
 │   │       ├── character.ts     ← キャラクター読み込み・アニメーション・色替え

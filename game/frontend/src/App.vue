@@ -12,7 +12,7 @@
     <div id="screen-home" class="screen-overlay hidden">
       <div class="home-stack">
         <div class="home-title">Motion Dile</div>
-        <div class="home-subtitle">AR ワニ人狼ゲーム</div>
+        <div class="home-subtitle">動きと駆け引きが交錯する AR 対戦</div>
         <div id="home-tut-inline" class="home-tut-inline" aria-label="遊び方（タップで次のページ）" />
         <input
           id="player-name-input"

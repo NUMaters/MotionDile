@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import type { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { NetPlayerState, RoomSnapshot, RemotePlayer, MovePayload, WsMessage } from './types';
 import { GAME_API_BASE, GAME_WS_BASE, roomIdFromUrl, CLIP_NAMES, MOVE_SEND_INTERVAL } from './config';
 import { applyServerGameRules, getGameRules, type GameRulesState } from './game-rules';
 import { smoothToward } from './utils';
 import { scene } from './scene';
+import { composeNeckDeltaQuaternion } from './neck-sync';
 import { tintModel, setLocomotionWeights } from './character';
 import { setMultiplayerStatus } from './hud';
 import {
@@ -39,30 +39,7 @@ export function getActiveRoomId(): string {
   return activeRoomId;
 }
 
-/** 自キャラ頭上ネーム（CSS2D）。色は `localPlayerColor` と一致 */
-let localPlayerNameLabel: CSS2DObject | null = null;
-
-function detachLocalPlayerNameLabel(): void {
-  if (localPlayerNameLabel) {
-    localPlayerNameLabel.parent?.remove(localPlayerNameLabel);
-    localPlayerNameLabel = null;
-  }
-}
-
-function attachLocalPlayerNameLabel(modelRoot: THREE.Object3D): void {
-  detachLocalPlayerNameLabel();
-  const name = getJoinDisplayName().trim() || 'プレイヤー';
-  const label = createNameLabel(name, localPlayerColor || undefined);
-  modelRoot.add(label);
-  autoPositionLabel(label, modelRoot);
-  localPlayerNameLabel = label;
-}
-
-function refreshLocalPlayerNameLabelAccent(): void {
-  if (localPlayerNameLabel) {
-    setNameLabelAccent(localPlayerNameLabel, localPlayerColor || undefined);
-  }
-}
+const remoteNeckDeltaQuat = new THREE.Quaternion();
 
 let gameSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
@@ -108,7 +85,6 @@ export function isLocalModelTinted(): boolean {
 export function setLocalModel(m: THREE.Object3D): void {
   localModel = m;
   applyLocalPlayerColorTint();
-  attachLocalPlayerNameLabel(m);
 }
 
 export function setRemoteModelTemplate(template: THREE.Group, clips: THREE.AnimationClip[]): void {
@@ -324,7 +300,6 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
       if (p.color) {
         localPlayerColor = p.color;
         applyLocalPlayerColorTint();
-        refreshLocalPlayerNameLabelAccent();
       }
       continue;
     }
@@ -410,7 +385,6 @@ export async function joinRoom(): Promise<void> {
     if (me?.color) {
       localPlayerColor = me.color;
       applyLocalPlayerColorTint();
-      refreshLocalPlayerNameLabelAccent();
     }
     applyRoomSnapshot(payload.snapshot);
   }
@@ -597,11 +571,11 @@ export function updateRemotePlayers(dt: number): void {
     applyRemoteLocomotion(remote);
 
     if (remote.headBone && remote.headBaseQuat) {
-      remote.smoothNeckYaw = smoothToward(remote.smoothNeckYaw, remote.targetNeckYaw, dt, 10);
-      remote.smoothNeckPitch = smoothToward(remote.smoothNeckPitch, remote.targetNeckPitch, dt, 10);
-      const neckEuler = new THREE.Euler(remote.smoothNeckPitch, remote.smoothNeckYaw, 0, 'YXZ');
-      const neckQuat = new THREE.Quaternion().setFromEuler(neckEuler);
-      remote.headBone.quaternion.copy(remote.headBaseQuat).multiply(neckQuat);
+      /** 首は動きが細かいので本体より少しだけ速く追従（Euler 順は `composeNeckDeltaQuaternion` に統一） */
+      remote.smoothNeckYaw = smoothToward(remote.smoothNeckYaw, remote.targetNeckYaw, dt, 22);
+      remote.smoothNeckPitch = smoothToward(remote.smoothNeckPitch, remote.targetNeckPitch, dt, 22);
+      composeNeckDeltaQuaternion(remoteNeckDeltaQuat, remote.smoothNeckPitch, remote.smoothNeckYaw);
+      remote.headBone.quaternion.copy(remote.headBaseQuat).multiply(remoteNeckDeltaQuat);
     }
 
     remote.mixer?.update(dt);
@@ -634,7 +608,6 @@ export function cleanup(): void {
   if (gameSocket) gameSocket.close();
   gameSocket = null;
   clearRemotePlayers();
-  detachLocalPlayerNameLabel();
   localPlayerColor = '';
   lastAppliedLocalTintHex = '';
   const roomJustLeft = activeRoomId;

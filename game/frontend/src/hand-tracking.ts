@@ -11,6 +11,7 @@ import {
 import { clamp, smoothToward, errorToText, getEl } from './utils';
 import { setHandModelStatus } from './hud';
 import { beginDeviceLookFromUserGesture } from './device-look';
+import { composeNeckDeltaQuaternion } from './neck-sync';
 
 let handLandmarker: HandLandmarker | null = null;
 let cameraActive = false;
@@ -28,8 +29,9 @@ const camVideo = getEl<HTMLVideoElement>('cam-video');
 const camPreview = getEl<HTMLElement>('cam-preview');
 const camOverlay = getEl<HTMLCanvasElement>('cam-overlay');
 
-const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const qNeck = new THREE.Quaternion();
+
+export { composeNeckDeltaQuaternion };
 
 type HandFeatures = {
   avgCurl: number;
@@ -535,7 +537,6 @@ export function applyHeadTracking(
   const targetPitch = (hasTracking ? handState.neckPitch : 0) + additiveNeckPitch;
   smoothNeckYaw = smoothToward(smoothNeckYaw, targetYaw, dt, HEAD_HAND_TRACK_SMOOTH);
   smoothNeckPitch = smoothToward(smoothNeckPitch, targetPitch, dt, HEAD_HAND_TRACK_SMOOTH);
-  euler.set(smoothNeckPitch, 0, smoothNeckYaw, 'ZXY');
-  qNeck.setFromEuler(euler);
+  composeNeckDeltaQuaternion(qNeck, smoothNeckPitch, smoothNeckYaw);
   headBone.quaternion.copy(headBaseQuat).multiply(qNeck);
 }
