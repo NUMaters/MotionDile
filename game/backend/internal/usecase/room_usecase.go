@@ -3,6 +3,8 @@ package usecase
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,11 +14,22 @@ import (
 	"strings"
 	"time"
 
+	"waniar/game-backend/internal/config"
 	"waniar/game-backend/internal/domain/entity"
 	"waniar/game-backend/internal/domain/repository"
 )
 
 var ErrInvalidInput = errors.New("invalid input")
+
+// ErrGameInProgress は対戦・投票・結果表示中に、まだその部屋にいないプレイヤーが Join しようとしたとき
+var ErrGameInProgress = errors.New("game in progress")
+
+// ErrRoomFull はロビーで定員に達しており、新規参加できないとき
+var ErrRoomFull = errors.New("room is full")
+
+func isLobbyPhase(ph entity.GamePhase) bool {
+	return ph == "" || ph == entity.PhaseWaiting || ph == entity.PhaseCountdown
+}
 
 type JoinInput struct {
 	RoomID      string
@@ -25,38 +38,61 @@ type JoinInput struct {
 }
 
 type MoveInput struct {
-	RoomID    string
-	PlayerID  string
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	Z         float64 `json:"z"`
-	RotationY float64 `json:"rotationY"`
-	NeckYaw   float64 `json:"neckYaw"`
-	NeckPitch float64 `json:"neckPitch"`
+	RoomID        string
+	PlayerID      string
+	X             float64 `json:"x"`
+	Y             float64 `json:"y"`
+	Z             float64 `json:"z"`
+	RotationY     float64 `json:"rotationY"`
+	NeckYaw       float64 `json:"neckYaw"`
+	NeckPitch     float64 `json:"neckPitch"`
 	Animation     string  `json:"animation"`
 	MouthOpenness float64 `json:"mouthOpenness"`
 	IdleBob       float64 `json:"idleBob"`
-	IdlePitch float64 `json:"idlePitch"`
-	IdleRoll  float64 `json:"idleRoll"`
+	IdlePitch     float64 `json:"idlePitch"`
+	IdleRoll      float64 `json:"idleRoll"`
 }
 
 type RoomUsecase struct {
 	repo     repository.RoomRepository
 	agentURL string
 	hc       *http.Client
+	rules    config.Rules
 }
 
-func NewRoomUsecase(repo repository.RoomRepository, agentURL string) *RoomUsecase {
+func NewRoomUsecase(repo repository.RoomRepository, agentURL string, rules config.Rules) *RoomUsecase {
 	return &RoomUsecase{
 		repo:     repo,
 		agentURL: agentURL,
 		hc:       &http.Client{Timeout: 6 * time.Second},
+		rules:    rules,
 	}
 }
 
 func (u *RoomUsecase) Join(ctx context.Context, in JoinInput) (entity.RoomSnapshot, error) {
 	if strings.TrimSpace(in.RoomID) == "" || strings.TrimSpace(in.PlayerID) == "" {
 		return entity.RoomSnapshot{}, ErrInvalidInput
+	}
+	existingSnap, err := u.repo.GetSnapshot(ctx, in.RoomID)
+	if err != nil {
+		return entity.RoomSnapshot{}, err
+	}
+	gs, err := u.repo.GetGameState(ctx, in.RoomID)
+	if err != nil {
+		return entity.RoomSnapshot{}, err
+	}
+	isReturning := false
+	for _, p := range existingSnap.Players {
+		if p.PlayerID == in.PlayerID {
+			isReturning = true
+			break
+		}
+	}
+	if !isLobbyPhase(gs.Phase) && !isReturning {
+		return entity.RoomSnapshot{}, ErrGameInProgress
+	}
+	if !isReturning && len(existingSnap.Players) >= u.rules.MaxPlayers {
+		return entity.RoomSnapshot{}, ErrRoomFull
 	}
 	name := strings.TrimSpace(in.DisplayName)
 	if len([]rune(name)) > 16 {
@@ -75,6 +111,82 @@ func (u *RoomUsecase) Join(ctx context.Context, in JoinInput) (entity.RoomSnapsh
 		UpdatedAt:   time.Now().UnixMilli(),
 	}
 	return u.repo.Join(ctx, in.RoomID, initial)
+}
+
+// ResolveLobbyRoom は preferred が待機・カウントダウン中ならそのまま、対戦中等なら別の待機可能な部屋 ID または新規 ID を返す。
+// preferred が空のときは、待機中の部屋をいずれか一つ選び（なければ新規作成）。既定 URL（クエリなし）からの参加用。
+// excludeRoomID が空でないときは preferred が空の場合のみ、該当 ID の待機ルームはスキップする（ゲーム終了直後に別プールへ入るため）。
+func (u *RoomUsecase) ResolveLobbyRoom(ctx context.Context, preferredRoomID, excludeRoomID string) (roomID string, redirected bool, reason string, err error) {
+	preferredRoomID = strings.TrimSpace(preferredRoomID)
+	excludeRoomID = strings.TrimSpace(excludeRoomID)
+
+	allIDs, err := u.repo.ListRoomIDs(ctx)
+	if err != nil {
+		return "", false, "", err
+	}
+
+	if preferredRoomID == "" {
+		for _, id := range allIDs {
+			if excludeRoomID != "" && id == excludeRoomID {
+				continue
+			}
+			g, e := u.repo.GetGameState(ctx, id)
+			if e != nil {
+				continue
+			}
+			if isLobbyPhase(g.Phase) {
+				return id, true, "auto_existing", nil
+			}
+		}
+		newID, err := u.allocNewLobbyRoomID(allIDs)
+		if err != nil {
+			return "", false, "", err
+		}
+		return newID, true, "auto_create", nil
+	}
+
+	gs, err := u.repo.GetGameState(ctx, preferredRoomID)
+	if err != nil {
+		return "", false, "", err
+	}
+	if isLobbyPhase(gs.Phase) {
+		return preferredRoomID, false, "", nil
+	}
+	for _, id := range allIDs {
+		if id == preferredRoomID {
+			continue
+		}
+		g, e := u.repo.GetGameState(ctx, id)
+		if e != nil {
+			continue
+		}
+		if isLobbyPhase(g.Phase) {
+			return id, true, "game_in_progress", nil
+		}
+	}
+	newID, err := u.allocNewLobbyRoomID(allIDs)
+	if err != nil {
+		return "", false, "", err
+	}
+	return newID, true, "game_in_progress", nil
+}
+
+func (u *RoomUsecase) allocNewLobbyRoomID(existing []string) (string, error) {
+	taken := make(map[string]struct{}, len(existing))
+	for _, id := range existing {
+		taken[id] = struct{}{}
+	}
+	for range 48 {
+		var b [4]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", err
+		}
+		id := "lobby-" + hex.EncodeToString(b[:])
+		if _, ok := taken[id]; !ok {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("could not allocate room id")
 }
 
 func (u *RoomUsecase) Move(ctx context.Context, in MoveInput) (entity.RoomSnapshot, error) {
@@ -158,6 +270,8 @@ type agentHintRequest struct {
 	GameDuration int               `json:"gameDuration"`
 	ElapsedSec   int               `json:"elapsedSec"`
 	MapRadius    float64           `json:"mapRadius"`
+	AllyTheme    string            `json:"allyTheme,omitempty"`
+	EnemyTheme   string            `json:"enemyTheme,omitempty"`
 	Players      []agentPlayerInfo `json:"players"`
 	Landmarks    []LandmarkInfo    `json:"landmarks,omitempty"`
 }
@@ -176,8 +290,12 @@ func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum i
 		return entity.HintInfo{}, err
 	}
 
+	roundSet := roundPlayerIDSetFromGameState(gs)
 	players := make([]agentPlayerInfo, 0, len(snapshot.Players))
 	for _, p := range snapshot.Players {
+		if roundSet != nil && !roundSet[p.PlayerID] {
+			continue
+		}
 		players = append(players, agentPlayerInfo{
 			PlayerID:      p.PlayerID,
 			DisplayName:   p.DisplayName,
@@ -198,16 +316,26 @@ func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum i
 		if remaining < 0 {
 			remaining = 0
 		}
-		elapsed := (30 * time.Second) - remaining
+		elapsed := u.rules.GameDuration - remaining
+		if elapsed < 0 {
+			elapsed = 0
+		}
 		elapsedSec = int(elapsed.Seconds())
+	}
+
+	gameDurSec := int(u.rules.GameDuration / time.Second)
+	if gameDurSec < 1 {
+		gameDurSec = 1
 	}
 
 	reqBody := agentHintRequest{
 		RoomID:       roomID,
 		HintNumber:   hintNum,
-		GameDuration: 30,
+		GameDuration: gameDurSec,
 		ElapsedSec:   elapsedSec,
-		MapRadius:    1.3,
+		MapRadius:    u.rules.MapRadius,
+		AllyTheme:    gs.AllyTheme,
+		EnemyTheme:   gs.EnemyTheme,
 		Players:      players,
 		Landmarks:    landmarks,
 	}
@@ -257,12 +385,27 @@ func (u *RoomUsecase) callAgentAPI(ctx context.Context, req agentHintRequest) (s
 	return result.Text, nil
 }
 
+func roundPlayerIDSetFromGameState(gs entity.GameState) map[string]bool {
+	if len(gs.RoundPlayerIDs) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(gs.RoundPlayerIDs))
+	for _, id := range gs.RoundPlayerIDs {
+		m[id] = true
+	}
+	return m
+}
+
 func (u *RoomUsecase) fallbackHint(hintNum int, snap entity.RoomSnapshot, gs entity.GameState) entity.HintInfo {
+	roundSet := roundPlayerIDSetFromGameState(gs)
 	for _, p := range snap.Players {
+		if roundSet != nil && !roundSet[p.PlayerID] {
+			continue
+		}
 		if p.PlayerID == gs.EnemyPlayerID {
 			zone := fallbackZone(p.X, p.Z)
 			movement := fallbackMovement(p.Animation)
-			return entity.HintInfo{Number: hintNum, Text: fmt.Sprintf("通報: %sで不審な%sを確認", zone, movement)}
+			return entity.HintInfo{Number: hintNum, Text: fmt.Sprintf("%sで不審な%sを確認", zone, movement)}
 		}
 	}
 	return entity.HintInfo{Number: hintNum, Text: "情報収集中…しばらくお待ちください"}
@@ -303,6 +446,18 @@ func (u *RoomUsecase) TallyVotes(ctx context.Context, roomID string) (entity.Vot
 		return entity.VoteResult{}, err
 	}
 
+	snap, err := u.repo.GetSnapshot(ctx, roomID)
+	if err != nil {
+		return entity.VoteResult{}, err
+	}
+	enemyColor := ""
+	for _, p := range snap.Players {
+		if p.PlayerID == gs.EnemyPlayerID {
+			enemyColor = p.Color
+			break
+		}
+	}
+
 	counts := make(map[string]int)
 	for _, votedFor := range gs.Votes {
 		counts[votedFor]++
@@ -319,6 +474,9 @@ func (u *RoomUsecase) TallyVotes(ctx context.Context, roomID string) (entity.Vot
 
 	return entity.VoteResult{
 		EnemyPlayerID: gs.EnemyPlayerID,
+		EnemyColor:    enemyColor,
+		AllyTheme:     gs.AllyTheme,
+		EnemyTheme:    gs.EnemyTheme,
 		Votes:         gs.Votes,
 		VoteCounts:    counts,
 		CitizensWin:   accused == gs.EnemyPlayerID,

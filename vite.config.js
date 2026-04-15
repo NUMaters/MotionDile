@@ -1,6 +1,7 @@
 import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from 'fs';
 import { extname, join, resolve } from 'path';
 import basicSsl from '@vitejs/plugin-basic-ssl';
+import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 
 /**
@@ -146,7 +147,19 @@ function copyMedeaPipelineToDist() {
 }
 
 export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['game/frontend/src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      reportsDirectory: 'coverage/frontend',
+      include: ['game/frontend/src/**/*.{ts,tsx,vue}'],
+      exclude: ['game/frontend/src/**/*.test.ts', 'game/frontend/src/env.d.ts'],
+    },
+  },
   plugins: [
+    vue(),
     basicSsl(),
     syncWaniGlbToPublic(),
     modelingDevStatic(),
@@ -158,10 +171,6 @@ export default defineConfig({
     host: true,
     https: true,
     proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:8080',
-        changeOrigin: true,
-      },
       '/game-api': {
         target: 'http://127.0.0.1:8090',
         changeOrigin: true,

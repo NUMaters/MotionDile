@@ -19,8 +19,30 @@ export const GAME_WS_BASE = import.meta.env.VITE_GAME_WS_BASE
   || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/game-ws`;
 
 // ─── ルーム / セッション ───────────────────────────────────────────────────
-/** URL クエリ `?room=`。未指定時は `lobby` */
-export const roomId = new URLSearchParams(location.search).get('room') || 'lobby';
+/** URL クエリ `?room=`（任意・共有用）。未指定時は空で、参加時に API が待機中の部屋を検索または新規作成 */
+export const roomIdFromUrl = new URLSearchParams(location.search).get('room') ?? '';
+
+/** サーバ未割当時のラベル／投票プレビュー用（青系はワニ本体と区別しづらいためオレンジ系） */
+export const FALLBACK_PLAYER_COLOR = '#FB8C00';
+
+// ─── ゲームルール（既定値。WebSocket の `game_state.rules` で上書き） ─────────
+function vitePositiveInt(key: string, fallback: number): number {
+  const raw = import.meta.env[key] as string | undefined;
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
+/** フロント表示・フォールバック用。バックエンドは `WANIAR_*` 環境変数（`game/backend/internal/config/rules.go`） */
+export const GAME_RULES = {
+  maxPlayers: vitePositiveInt('VITE_WANIAR_MAX_PLAYERS', 10),
+  minPlayers: vitePositiveInt('VITE_WANIAR_MIN_PLAYERS', 3),
+  gameDurationSec: vitePositiveInt('VITE_WANIAR_GAME_DURATION_SEC', 60),
+  matchCountdownSec: vitePositiveInt('VITE_WANIAR_MATCH_COUNTDOWN_SEC', 20),
+  voteDurationSec: vitePositiveInt('VITE_WANIAR_VOTE_DURATION_SEC', 20),
+  hintIntervalSec: vitePositiveInt('VITE_WANIAR_HINT_INTERVAL_SEC', 15),
+  resultDurationSec: vitePositiveInt('VITE_WANIAR_RESULT_DURATION_SEC', 10),
+} as const;
 
 // ─── ワールド座標・スケール ─────────────────────────────────────────────────
 /** デフォルト地面プレーンおよび地形合わせの基準 Y */
@@ -218,14 +240,14 @@ export const DEFAULT_HAND_CONTROL_MODEL: HandControlModel = {
 };
 
 // ─── マルチプレイ用ボディ色付け（テクスチャ／ソリッドのブレンド） ─────────────
-/** テクスチャありメッシュでプレイヤー色を乗せるときのアルベドブレンド強度 */
-export const BODY_TINT_MAP_BLEND = 0.88;
+/** テクスチャありメッシュでプレイヤー色を乗せるときのアルベドブレンド強度（高いほど色がはっきり） */
+export const BODY_TINT_MAP_BLEND = 0.93;
 /** ソリッド色メッシュでのブレンド強度 */
-export const BODY_TINT_SOLID_BLEND = 0.78;
+export const BODY_TINT_SOLID_BLEND = 0.88;
 /** 発光色にプレイヤー色を混ぜる倍率 */
-export const BODY_EMISSIVE_MUL = 0.35;
+export const BODY_EMISSIVE_MUL = 0.42;
 /** 発光の強さ */
-export const BODY_EMISSIVE_INTENSITY = 0.55;
+export const BODY_EMISSIVE_INTENSITY = 0.62;
 /** 口内・目など、色を塗らないメッシュ名にマッチする正規表現 */
 export const TINT_SKIP_NAME =
   /tongue|mouth|gum|teeth|tooth|lip|inner|oral|palate|saliva|口|舌|歯|歯茎|唇|目|eye|pupil|iris/i;

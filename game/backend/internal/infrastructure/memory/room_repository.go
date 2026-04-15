@@ -3,11 +3,15 @@ package memory
 import (
 	"context"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 
 	"waniar/game-backend/internal/domain/entity"
+	"waniar/game-backend/internal/domain/repository"
 )
+
+var _ repository.RoomRepository = (*RoomRepository)(nil)
 
 type roomState struct {
 	version int64
@@ -171,6 +175,17 @@ func (r *RoomRepository) GetPlayerIDs(_ context.Context, roomID string) ([]strin
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+func (r *RoomRepository) ListRoomIDs(_ context.Context) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.rooms))
+	for id := range r.rooms {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func snapshotFromRoom(roomID string, room *roomState) entity.RoomSnapshot {

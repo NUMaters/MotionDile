@@ -137,6 +137,15 @@ function onOrientationChange(): void {
   resetCalibration();
 }
 
+/** WebKit で devicemotion を一度も購読しないと deviceorientation が来ない事例への対策（処理は空でよい） */
+function onDeviceMotionUnlock(_ev: DeviceMotionEvent): void {
+  /* intentionally empty */
+}
+
+const ORIENT_LISTENER_OPTS: AddEventListenerOptions = { capture: true, passive: true };
+const ORIENTATION_CHANGE_OPTS: AddEventListenerOptions = { capture: true };
+const DEVICE_MOTION_OPTS: AddEventListenerOptions = { passive: true };
+
 type PermissionResult = 'granted' | 'denied';
 
 type DeviceMotionEventCtor = typeof DeviceMotionEvent & {
@@ -147,24 +156,42 @@ type DeviceOrientationEventCtor = typeof DeviceOrientationEvent & {
 };
 
 /**
- * iOS 13+ の許可ダイアログは **同期的に** `requestPermission()` を呼ばないと出ないことがある。
- * `async`/`await` で挟まない。React360 の onClick と同様に **その場で** 呼ぶ。
- * 順序: DeviceMotionEvent → DeviceOrientationEvent（ユーザーのサンプル通り）。
+ * ユーザージェスチャー（実ボタンの click 推奨）の**同期的な**ハンドラ内から呼ぶこと。
+ *
+ * iOS Safari では `requestPermission()` を **await せず void で叩いた直後**に
+ * `deviceorientation` / `devicemotion` を購読するパターンが安定する。
+ * Promise の `.then` のあとだけ `startDeviceLook` すると、環境によっては一度もイベントが来ない。
+ *
+ * また **DeviceMotionEvent.requestPermission** と **DeviceOrientationEvent.requestPermission** の両方を
+ * 同じターンで呼び、続けて `startDeviceLook()` する（Motion 単体の報告も多い）。
  */
-export function requestDeviceLookPermissionSync(): void {
+export function beginDeviceLookFromUserGesture(): void {
+  if (typeof window.DeviceOrientationEvent === 'undefined') return;
+  if (!window.isSecureContext) {
+    console.warn('[device-look] 傾きセンサーは HTTPS（secure context）が必要です');
+  }
+
   const DM = DeviceMotionEvent as DeviceMotionEventCtor;
   const DO = DeviceOrientationEvent as DeviceOrientationEventCtor;
-  if (DM && DM.requestPermission && typeof DM.requestPermission === 'function') {
-    void DM.requestPermission();
+
+  if (typeof DeviceMotionEvent !== 'undefined' && DM.requestPermission && typeof DM.requestPermission === 'function') {
+    void DM.requestPermission().catch(() => {});
   }
-  if (DO && DO.requestPermission && typeof DO.requestPermission === 'function') {
-    void DO.requestPermission();
+  if (DO.requestPermission && typeof DO.requestPermission === 'function') {
+    void DO.requestPermission().catch(() => {});
   }
+
+  startDeviceLook();
 }
 
-/** 旧API互換（テスト用）。通常は `requestDeviceLookPermissionSync` を使う */
+/** @deprecated `beginDeviceLookFromUserGesture` を使う */
+export function requestDeviceLookPermissionSync(): void {
+  beginDeviceLookFromUserGesture();
+}
+
+/** 旧API互換（テスト用） */
 export async function requestDeviceLookPermission(): Promise<boolean> {
-  requestDeviceLookPermissionSync();
+  beginDeviceLookFromUserGesture();
   return true;
 }
 
@@ -174,8 +201,9 @@ export function startDeviceLook(): void {
   if (typeof window.DeviceOrientationEvent === 'undefined') return;
   listening = true;
   resetCalibration();
-  window.addEventListener('deviceorientation', onDeviceOrientation, true);
-  window.addEventListener('orientationchange', onOrientationChange, true);
+  window.addEventListener('deviceorientation', onDeviceOrientation, ORIENT_LISTENER_OPTS);
+  window.addEventListener('orientationchange', onOrientationChange, ORIENTATION_CHANGE_OPTS);
+  window.addEventListener('devicemotion', onDeviceMotionUnlock, DEVICE_MOTION_OPTS);
 }
 
 export function updateDeviceLook(dt: number): void {

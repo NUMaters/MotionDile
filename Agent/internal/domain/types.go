@@ -22,13 +22,15 @@ type LandmarkInfo struct {
 
 // ゲームサーバーから受け取るヒント生成リクエスト
 type HintRequest struct {
-	RoomID         string         `json:"roomId"`
-	HintNumber     int            `json:"hintNumber"`
-	GameDuration   int            `json:"gameDuration"`
-	ElapsedSec     int            `json:"elapsedSec"`
-	MapRadius      float64        `json:"mapRadius"`
-	Players        []PlayerInfo   `json:"players"`
-	Landmarks      []LandmarkInfo `json:"landmarks,omitempty"`
+	RoomID       string         `json:"roomId"`
+	HintNumber   int            `json:"hintNumber"`
+	GameDuration int            `json:"gameDuration"`
+	ElapsedSec   int            `json:"elapsedSec"`
+	MapRadius    float64        `json:"mapRadius"`
+	AllyTheme    string         `json:"allyTheme,omitempty"`
+	EnemyTheme   string         `json:"enemyTheme,omitempty"`
+	Players      []PlayerInfo   `json:"players"`
+	Landmarks    []LandmarkInfo `json:"landmarks,omitempty"`
 }
 
 // Agent が返すレスポンス

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"agent/internal/contract"
 	"agent/internal/domain"
 	"agent/internal/usecase"
 )
@@ -25,7 +26,14 @@ func (h *HintHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req domain.HintRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := contract.ValidateHintRequest(req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -38,5 +46,7 @@ func (h *HintHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("[agent] response encode error: %v", err)
+	}
 }

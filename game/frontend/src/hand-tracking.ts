@@ -10,7 +10,8 @@ import {
 } from './config';
 import { clamp, smoothToward, errorToText, getEl } from './utils';
 import { setHandModelStatus } from './hud';
-import { requestDeviceLookPermissionSync, startDeviceLook } from './device-look';
+import { beginDeviceLookFromUserGesture } from './device-look';
+import { composeNeckDeltaQuaternion } from './neck-sync';
 
 let handLandmarker: HandLandmarker | null = null;
 let cameraActive = false;
@@ -28,8 +29,9 @@ const camVideo = getEl<HTMLVideoElement>('cam-video');
 const camPreview = getEl<HTMLElement>('cam-preview');
 const camOverlay = getEl<HTMLCanvasElement>('cam-overlay');
 
-const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const qNeck = new THREE.Quaternion();
+
+export { composeNeckDeltaQuaternion };
 
 type HandFeatures = {
   avgCurl: number;
@@ -43,6 +45,10 @@ let emaTilt = 0;
 let emaPitch = 0;
 let emaExt = 1.35;
 let hadHandPrevFrame = false;
+
+let baseHandYaw: number | null = null;
+let baseHandPitch: number | null = null;
+let firstDetectionTime: number | null = null;
 
 /**
  * Hand Landmarker の .task（公式は float16 のみ配信。float32/latest は 404 になる）
@@ -365,76 +371,148 @@ export async function loadHandControlModel(): Promise<void> {
  * モーション許可（同期）→ 視点リスナー → カメラ起動をまとめて行う（iOS のユーザージェスチャ要件用）。
  */
 const firstTapOpts: AddEventListenerOptions = { capture: true, passive: true };
+/** iOS では pointer 系より touchstart の方がユーザージェスチャーとして安定する端末がある */
+const firstTouchOpts: AddEventListenerOptions = { capture: true, passive: true };
+
+export type ActivateSensorsOptions = {
+  /** カメラ起動失敗時（再タップ用に窓へリスナーを戻すときなど） */
+  onCameraFail?: () => void;
+};
 
 /**
- * ジョイスティック等がキャンバスより上でも拾えるよう、初回だけ `window` の capture で処理する。
- * `preventDefault` はしない（移動の初タップと兼用できるようにする）。
+ * 傾きセンサー＋カメラ。`ゲーム参加` の click など、ユーザージェスチャーの同期的なハンドラ内から呼ぶ。
  */
-export function showTapToStart(): void {
-  function bindStartListener(): void {
-    window.addEventListener('pointerdown', onFirstPointerDown, firstTapOpts);
+export function activateSensorsFromUserGesture(options?: ActivateSensorsOptions): void {
+  beginDeviceLookFromUserGesture();
+
+  void startCamera().then((ok) => {
+    if (ok) {
+      setHandModelStatus(savedHandModelHudLine);
+      return;
+    }
+    const hint = lastCameraErrorMessage || 'カメラを開始できません';
+    setHandModelStatus(`${savedHandModelHudLine} — ${hint}（画面をタップして再試行）`);
+    options?.onCameraFail?.();
+  });
+}
+
+/**
+ * カメラ起動に失敗したあと、画面のどこかをタップしたら再度センサー＋カメラを試す。
+ */
+export function registerSensorRetryOnWindowTap(): void {
+  function bind(): void {
+    window.addEventListener('pointerdown', onRetry, firstTapOpts);
+    window.addEventListener('touchstart', onRetry, firstTouchOpts);
   }
 
-  function onFirstPointerDown(): void {
-    window.removeEventListener('pointerdown', onFirstPointerDown, firstTapOpts);
+  function onRetry(): void {
+    window.removeEventListener('pointerdown', onRetry, firstTapOpts);
+    window.removeEventListener('touchstart', onRetry, firstTouchOpts);
 
-    requestDeviceLookPermissionSync();
-    startDeviceLook();
-
-    void startCamera().then((ok) => {
-      if (ok) {
-        setHandModelStatus(savedHandModelHudLine);
-        return;
-      }
-      const hint = lastCameraErrorMessage || 'カメラを開始できません';
-      setHandModelStatus(`${savedHandModelHudLine} — ${hint}（画面をタップして再試行）`);
-      bindStartListener();
+    activateSensorsFromUserGesture({
+      onCameraFail: bind,
     });
   }
 
-  bindStartListener();
+  bind();
 }
 
 function processHandResults(results: HandLandmarkerVideoResult) {
   const ctx = camOverlay.getContext('2d');
-  if (!ctx) return;
-  ctx.clearRect(0, 0, camOverlay.width, camOverlay.height);
+  if (ctx) ctx.clearRect(0, 0, camOverlay.width, camOverlay.height);
 
+  // 手が画面から消えたら、すべてリセット（タイマーも！）
   if (!results.landmarks || results.landmarks.length === 0) {
     handState.detected = false;
     hadHandPrevFrame = false;
+    baseHandYaw = null;
+    baseHandPitch = null;
+    firstDetectionTime = null; // ★リセット
     return;
   }
   handState.detected = true;
-  const lm = results.landmarks[0];
+  const rawLm = results.landmarks[0];
 
-  ctx.fillStyle = '#00ff88';
-  for (const p of lm) {
-    ctx.beginPath();
-    ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 3, 0, Math.PI * 2);
-    ctx.fill();
+  // (1-x, 1-y) に変換
+  const lm = rawLm.map(p => ({ x: 1 - p.x, y: 1 - p.y, z: p.z }));
+
+  // 1. 各ポイントの定義
+  const vWrist      = new THREE.Vector3(lm[0].x, lm[0].y, lm[0].z);
+  const vMiddleBase = new THREE.Vector3(lm[9].x, lm[9].y, lm[9].z);
+  const vMiddleTip  = new THREE.Vector3(lm[12].x, lm[12].y, lm[12].z);
+  const vThumbTip   = new THREE.Vector3(lm[4].x, lm[4].y, lm[4].z);
+
+  // ★ 2. 口の開閉（待機中も口だけは動かせるように、先に計算します）
+  const vecToMiddle = new THREE.Vector3().subVectors(vMiddleTip, vMiddleBase).normalize();
+  const vecToThumb = new THREE.Vector3().subVectors(vThumbTip, vMiddleBase).normalize();
+  const mouthAngle = vecToMiddle.angleTo(vecToThumb);
+
+  const MOUTH_CLOSE_ANGLE = 0.3;
+  const MOUTH_OPEN_ANGLE = 0.8;
+  const openness = (mouthAngle - MOUTH_CLOSE_ANGLE) / (MOUTH_OPEN_ANGLE - MOUTH_CLOSE_ANGLE);
+  handState.mouthOpenness = Math.max(0, Math.min(1, openness));
+
+  // 3. 首の向きの計算
+  //const handAxis = new THREE.Vector3().subVectors(vMiddleBase, vWrist).normalize();
+  // 手首から「中指の先端（鼻先）」へのベクトルを完全な基準軸とする！
+  const handAxis = new THREE.Vector3().subVectors(vMiddleTip, vWrist).normalize();
+  const currentYaw = Math.asin(handAxis.x);
+  const currentPitch = Math.asin(handAxis.y);
+
+  // =======================================================
+  // 🐊 1秒遅延（ディレイ）オートセンタリング
+  // =======================================================
+  if (firstDetectionTime === null) {
+    // 手が映った最初のフレームの時間を記録 (ミリ秒)
+    firstDetectionTime = performance.now(); 
   }
-  ctx.strokeStyle = 'rgba(0,255,136,.4)';
-  ctx.lineWidth = 2;
-  const connections = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
-  for (const [a, b] of connections) {
-    ctx.beginPath();
-    ctx.moveTo(lm[a].x * camOverlay.width, lm[a].y * camOverlay.height);
-    ctx.lineTo(lm[b].x * camOverlay.width, lm[b].y * camOverlay.height);
-    ctx.stroke();
+
+  if (baseHandYaw === null || baseHandPitch === null) {
+    const elapsed = performance.now() - firstDetectionTime;
+    
+    if (elapsed < 1000) { // ★ 1000ミリ秒（1秒）未満なら
+      // 首の動きを「正面」でロックして待機
+      handState.neckYaw = 0;
+      handState.neckPitch = 0;
+      
+      // デバッグ描画（準備中は黄色で表示）
+      if (ctx) {
+        ctx.fillStyle = '#ffff00'; // Yellow
+        for (const p of rawLm) {
+          ctx.beginPath(); ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 3, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      return; // 首の計算はスキップしてここで終了
+      
+    } else {
+      // ★ 1秒経過した瞬間に、その時の角度を「正面」として記憶！
+      baseHandYaw = currentYaw;
+      baseHandPitch = currentPitch;
+    }
   }
 
-  const raw = extractHandFeaturesForModel(landmarksForHandControl(lm), handControlModel.version);
-  const f = applyFeatureEma(raw);
-  const m = handControlModel;
-  handState.mouthOpenness = mouthOpennessFromFeatures(f, m);
+  // 4. 基準からのズレを計算して動かす
+  const YAW_GAIN = 1.8;
+  const PITCH_GAIN = 1.8;
 
-  const yaw = clamp((f.tiltAngle - m.neck.neutralTilt) * m.neck.yawGain, -m.neck.maxYaw, m.neck.maxYaw);
-  const pitch = clamp((f.pitchAngle - m.neck.neutralPitchAngle) * m.neck.pitchGain, -m.neck.maxPitch, m.neck.maxPitch);
-  const yawDead = m.version >= 2 ? 0.022 : 0.035;
-  const pitchDead = m.version >= 2 ? 0.018 : 0.03;
-  handState.neckYaw = Math.abs(yaw) < yawDead ? 0 : yaw;
-  handState.neckPitch = Math.abs(pitch) < pitchDead ? 0 : pitch;
+  // ※ もし先ほどのテストで左右が逆だった場合は、 (currentYaw - baseHandYaw) の先頭にマイナス - をつけてください！
+  const rawYaw = (currentYaw - baseHandYaw) * YAW_GAIN;
+  const rawPitch = -(currentPitch - baseHandPitch) * PITCH_GAIN;
+
+  // 5. クランプしてステートに反映
+  const YAW_LIMIT = 0.8;
+  const PITCH_LIMIT = 0.5;
+
+  handState.neckYaw = Math.max(-YAW_LIMIT, Math.min(YAW_LIMIT, rawYaw));
+  handState.neckPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, rawPitch));
+
+  // デバッグ描画（準備完了後は緑色で表示）
+  if (ctx) {
+    ctx.fillStyle = '#00ff88'; // Green
+    for (const p of rawLm) {
+      ctx.beginPath(); ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 3, 0, Math.PI * 2); ctx.fill();
+    }
+  }
 }
 
 export function updateHandTracking(now: number): void {
@@ -459,7 +537,6 @@ export function applyHeadTracking(
   const targetPitch = (hasTracking ? handState.neckPitch : 0) + additiveNeckPitch;
   smoothNeckYaw = smoothToward(smoothNeckYaw, targetYaw, dt, HEAD_HAND_TRACK_SMOOTH);
   smoothNeckPitch = smoothToward(smoothNeckPitch, targetPitch, dt, HEAD_HAND_TRACK_SMOOTH);
-  euler.set(smoothNeckPitch, smoothNeckYaw, 0, 'YXZ');
-  qNeck.setFromEuler(euler);
+  composeNeckDeltaQuaternion(qNeck, smoothNeckPitch, smoothNeckYaw);
   headBone.quaternion.copy(headBaseQuat).multiply(qNeck);
 }

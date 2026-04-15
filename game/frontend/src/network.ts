@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { NetPlayerState, RoomSnapshot, RemotePlayer, MovePayload, WsMessage } from './types';
-import { GAME_API_BASE, GAME_WS_BASE, roomId, CLIP_NAMES, MOVE_SEND_INTERVAL } from './config';
+import { GAME_API_BASE, GAME_WS_BASE, roomIdFromUrl, CLIP_NAMES, MOVE_SEND_INTERVAL } from './config';
+import { applyServerGameRules, getGameRules, type GameRulesState } from './game-rules';
 import { smoothToward } from './utils';
 import { scene } from './scene';
+import { composeNeckDeltaQuaternion } from './neck-sync';
 import { tintModel, setLocomotionWeights } from './character';
 import { setMultiplayerStatus } from './hud';
 import {
@@ -12,9 +14,32 @@ import {
   startVoting, showResults, setVoteCallback, getPlayerRole,
 } from './screens';
 import { setPlayerDisplayNamesFromSnapshot, setPlayerDisplayName, getJoinDisplayName, resolveDisplayName } from './player-names';
-import { disposeVotePreviews } from './vote-previews';
-import { createNameLabel, autoPositionLabel, updateNameLabelText } from './name-labels';
+import {
+  createNameLabel, autoPositionLabel, updateNameLabelText, setNameLabelAccent,
+} from './name-labels';
 import { getWorldLandmarks } from './world';
+
+/** 参加中の部屋。空のときは未解決（次回 `resolve` で決定）。ゲーム終了・離脱時にクリアし URL からも `room` を外す */
+let activeRoomId = roomIdFromUrl;
+
+/** `cleanup` 直前にいた部屋。次回 `resolve`（自動検索時）で除外し、別の待機ルームへ入る */
+let excludeRoomAfterLeave: string | null = null;
+
+/** アドレスバーから `room` クエリを除き `/` のままにする（共有用 `?room=` だけのときはクエリごと消える） */
+function stripRoomQueryFromUrl(): void {
+  const u = new URL(window.location.href);
+  if (!u.searchParams.has('room')) return;
+  u.searchParams.delete('room');
+  const q = u.searchParams.toString();
+  const next = u.pathname + (q ? `?${q}` : '') + u.hash;
+  history.replaceState(null, '', next);
+}
+
+export function getActiveRoomId(): string {
+  return activeRoomId;
+}
+
+const remoteNeckDeltaQuat = new THREE.Quaternion();
 
 let gameSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
@@ -29,7 +54,8 @@ let remoteModelTemplate: THREE.Group | null = null;
 let remoteAnimationClips: THREE.AnimationClip[] = [];
 
 let localModel: THREE.Object3D | null = null;
-let localModelTinted = false;
+/** 最後に `tintModel` へ渡した hex（サーバの `color` と一致していれば再ティント不要） */
+let lastAppliedLocalTintHex = '';
 export let localPlayerColor = '';
 
 const playerId = (() => {
@@ -42,14 +68,23 @@ const playerId = (() => {
 })();
 
 export function getPlayerId(): string { return playerId; }
-export function isLocalModelTinted(): boolean { return localModelTinted; }
+
+/** モデルと色が揃ったときに呼ぶ。色が変わった場合のみ `tintModel` する */
+export function applyLocalPlayerColorTint(): void {
+  if (!localModel || !localPlayerColor) return;
+  if (lastAppliedLocalTintHex === localPlayerColor) return;
+  tintModel(localModel, localPlayerColor);
+  lastAppliedLocalTintHex = localPlayerColor;
+}
+
+/** 後方互換: 現在の `localPlayerColor` へティント済みなら true */
+export function isLocalModelTinted(): boolean {
+  return localPlayerColor !== '' && lastAppliedLocalTintHex === localPlayerColor;
+}
 
 export function setLocalModel(m: THREE.Object3D): void {
   localModel = m;
-  if (localPlayerColor && !localModelTinted) {
-    tintModel(localModel, localPlayerColor);
-    localModelTinted = true;
-  }
+  applyLocalPlayerColorTint();
 }
 
 export function setRemoteModelTemplate(template: THREE.Group, clips: THREE.AnimationClip[]): void {
@@ -76,7 +111,7 @@ function createRemoteProxyRoot(): THREE.Group {
   const root = new THREE.Group();
   const body = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.08, 0.14, 4, 8),
-    new THREE.MeshStandardMaterial({ color: 0x5aa9ff, roughness: 0.6, metalness: 0.05 }),
+    new THREE.MeshStandardMaterial({ color: 0xfb8c00, roughness: 0.55, metalness: 0.08 }),
   );
   body.castShadow = true;
   body.receiveShadow = true;
@@ -156,7 +191,7 @@ function makeRemotePlayer(player: NetPlayerState): RemotePlayer {
   scene.add(root);
 
   const displayName = (player.displayName?.trim()) || resolveDisplayName(player.playerId);
-  const nameLabel = createNameLabel(displayName);
+  const nameLabel = createNameLabel(displayName, player.color || undefined);
   root.add(nameLabel);
   root.updateMatrixWorld(true);
   autoPositionLabel(nameLabel, root);
@@ -264,10 +299,7 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
     if (p.playerId === playerId) {
       if (p.color) {
         localPlayerColor = p.color;
-        if (localModel && !localModelTinted) {
-          tintModel(localModel, localPlayerColor);
-          localModelTinted = true;
-        }
+        applyLocalPlayerColorTint();
       }
       continue;
     }
@@ -295,7 +327,10 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
     const nextName = (p.displayName?.trim()) || resolveDisplayName(p.playerId);
     if (nextName !== remote.displayName) {
       remote.displayName = nextName;
-      if (remote.nameLabel) updateNameLabelText(remote.nameLabel as never, nextName);
+      if (remote.nameLabel) updateNameLabelText(remote.nameLabel as never, nextName, p.color);
+    }
+    if (p.color && remote.nameLabel) {
+      setNameLabelAccent(remote.nameLabel, p.color);
     }
     applyRemoteLocomotion(remote);
   }
@@ -307,8 +342,37 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
   setMultiplayerStatus(`部屋: ${snapshot.roomId} 同期中 ${snapshot.players.length}人`);
 }
 
+async function resolveLobbyIfNeeded(): Promise<void> {
+  const payload: { preferredRoomId: string; excludeRoomId?: string } = {
+    preferredRoomId: activeRoomId,
+  };
+  // 自動検索（preferred 空）のときだけ、直前に退室した部屋を除外して別の待機ルームへ
+  if (!activeRoomId && excludeRoomAfterLeave) {
+    payload.excludeRoomId = excludeRoomAfterLeave;
+  }
+  const res = await fetch(`${GAME_API_BASE}/rooms/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`resolve failed: HTTP ${res.status}`);
+  const data = await res.json() as { ok?: boolean; roomId?: string; redirected?: boolean; reason?: string };
+  if (!data.ok || !data.roomId) throw new Error('resolve: invalid response');
+  activeRoomId = data.roomId;
+  excludeRoomAfterLeave = null;
+  stripRoomQueryFromUrl();
+  if (data.redirected) {
+    const r = data.reason || '';
+    if (r === 'game_in_progress') {
+      setMultiplayerStatus(`対戦中のため待機ルーム「${activeRoomId}」へ移動しました`);
+    } else if (r === 'auto_existing' || r === 'auto_create') {
+      setMultiplayerStatus(`部屋「${activeRoomId}」に参加します`);
+    }
+  }
+}
+
 export async function joinRoom(): Promise<void> {
-  const res = await fetch(`${GAME_API_BASE}/rooms/${encodeURIComponent(roomId)}/players`, {
+  const res = await fetch(`${GAME_API_BASE}/rooms/${encodeURIComponent(activeRoomId)}/players`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ playerId, displayName: getJoinDisplayName() }),
@@ -317,21 +381,19 @@ export async function joinRoom(): Promise<void> {
   const payload = await res.json() as { snapshot?: unknown };
   if (payload.snapshot && isValidSnapshot(payload.snapshot)) {
     const me = payload.snapshot.players.find(p => p.playerId === playerId);
-    console.log(`[joinRoom] myColor=${me?.color}, model=${!!localModel}, playerId=${playerId}`);
+    if (import.meta.env.DEV) console.log(`[joinRoom] myColor=${me?.color}, model=${!!localModel}, playerId=${playerId}`);
     if (me?.color) {
       localPlayerColor = me.color;
-      if (localModel && !localModelTinted) {
-        tintModel(localModel, localPlayerColor);
-        localModelTinted = true;
-      }
+      applyLocalPlayerColorTint();
     }
     applyRoomSnapshot(payload.snapshot);
   }
 }
 
 export async function leaveRoom(): Promise<void> {
+  if (!activeRoomId) return;
   try {
-    await fetch(`${GAME_API_BASE}/rooms/${encodeURIComponent(roomId)}/players/${encodeURIComponent(playerId)}`, {
+    await fetch(`${GAME_API_BASE}/rooms/${encodeURIComponent(activeRoomId)}/players/${encodeURIComponent(playerId)}`, {
       method: 'DELETE',
       keepalive: true,
     });
@@ -345,13 +407,13 @@ export function connectGameSocket(): void {
     return;
   }
 
-  const url = `${GAME_WS_BASE}?roomId=${encodeURIComponent(roomId)}&playerId=${encodeURIComponent(playerId)}&displayName=${encodeURIComponent(getJoinDisplayName())}`;
-  setMultiplayerStatus(`部屋: ${roomId} 接続中`);
+  const url = `${GAME_WS_BASE}?roomId=${encodeURIComponent(activeRoomId)}&playerId=${encodeURIComponent(playerId)}&displayName=${encodeURIComponent(getJoinDisplayName())}`;
+  setMultiplayerStatus(`部屋: ${activeRoomId} 接続中`);
   const ws = new WebSocket(url);
   gameSocket = ws;
 
   ws.addEventListener('open', () => {
-    setMultiplayerStatus(`部屋: ${roomId} 接続済み`);
+    setMultiplayerStatus(`部屋: ${activeRoomId} 接続済み`);
     const lm = getWorldLandmarks();
     if (lm.length > 0) {
       ws.send(JSON.stringify({ type: 'landmarks', payload: { landmarks: lm } }));
@@ -397,7 +459,7 @@ export function connectGameSocket(): void {
     }
     clearRemotePlayers();
     if (!multiplayerSessionActive) return;
-    setMultiplayerStatus(`部屋: ${roomId} 再接続待ち`);
+    setMultiplayerStatus(`部屋: ${activeRoomId} 再接続待ち`);
     if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
     wsReconnectTimer = window.setTimeout(() => {
       connectGameSocket();
@@ -424,6 +486,7 @@ function sendVote(votedFor: string): void {
 let currentRole = 'citizen';
 
 function handleGameState(payload: Record<string, unknown>): void {
+  applyServerGameRules(payload.rules as Partial<GameRulesState> | undefined);
   const phase = payload.phase as string || 'waiting';
   const playerCount = (payload.playerCount as number) || 0;
   const countdownEnd = (payload.countdownEnd as number) || 0;
@@ -442,10 +505,12 @@ function handleGameState(payload: Record<string, unknown>): void {
 }
 
 function handleGameStart(payload: Record<string, unknown>): void {
-  const gameEnd = (payload.gameEnd as number) || Date.now() + 30000;
+  const fallbackMs = getGameRules().gameDurationSec * 1000;
+  const gameEnd = (payload.gameEnd as number) || Date.now() + fallbackMs;
   const role = (payload.role as string) || 'citizen';
+  const theme = (payload.theme as string) || undefined;
   currentRole = role;
-  startGameHud(gameEnd, role);
+  startGameHud(gameEnd, role, theme);
 }
 
 function handleHint(payload: Record<string, unknown>): void {
@@ -454,7 +519,7 @@ function handleHint(payload: Record<string, unknown>): void {
 }
 
 function handleVoteStart(payload: Record<string, unknown>): void {
-  const voteEnd = (payload.voteEnd as number) || Date.now() + 20000;
+  const voteEnd = (payload.voteEnd as number) || Date.now() + getGameRules().voteDurationSec * 1000;
   const players = (payload.players as { playerId: string; color: string; displayName?: string }[]) || [];
   for (const pl of players) {
     if (pl.displayName) setPlayerDisplayName(pl.playerId, pl.displayName);
@@ -467,7 +532,19 @@ function handleVoteResult(payload: Record<string, unknown>): void {
   const enemyPlayerId = (payload.enemyPlayerId as string) || '';
   const citizensWin = (payload.citizensWin as boolean) || false;
   const voteCounts = (payload.voteCounts as Record<string, number>) || {};
-  showResults(citizensWin, enemyPlayerId, voteCounts, currentRole);
+  const enemyColor = (payload.enemyColor as string) || '';
+  const allyTheme = (payload.allyTheme as string) || '';
+  const enemyTheme = (payload.enemyTheme as string) || '';
+  showResults(
+    citizensWin,
+    enemyPlayerId,
+    voteCounts,
+    currentRole,
+    enemyColor,
+    getVotePreviewModel(),
+    allyTheme,
+    enemyTheme,
+  );
   cleanup();
   if (onGameEndCallback) onGameEndCallback();
 }
@@ -494,11 +571,11 @@ export function updateRemotePlayers(dt: number): void {
     applyRemoteLocomotion(remote);
 
     if (remote.headBone && remote.headBaseQuat) {
-      remote.smoothNeckYaw = smoothToward(remote.smoothNeckYaw, remote.targetNeckYaw, dt, 10);
-      remote.smoothNeckPitch = smoothToward(remote.smoothNeckPitch, remote.targetNeckPitch, dt, 10);
-      const neckEuler = new THREE.Euler(remote.smoothNeckPitch, remote.smoothNeckYaw, 0, 'YXZ');
-      const neckQuat = new THREE.Quaternion().setFromEuler(neckEuler);
-      remote.headBone.quaternion.copy(remote.headBaseQuat).multiply(neckQuat);
+      /** 首は動きが細かいので本体より少しだけ速く追従（Euler 順は `composeNeckDeltaQuaternion` に統一） */
+      remote.smoothNeckYaw = smoothToward(remote.smoothNeckYaw, remote.targetNeckYaw, dt, 22);
+      remote.smoothNeckPitch = smoothToward(remote.smoothNeckPitch, remote.targetNeckPitch, dt, 22);
+      composeNeckDeltaQuaternion(remoteNeckDeltaQuat, remote.smoothNeckPitch, remote.smoothNeckYaw);
+      remote.headBone.quaternion.copy(remote.headBaseQuat).multiply(remoteNeckDeltaQuat);
     }
 
     remote.mixer?.update(dt);
@@ -506,22 +583,25 @@ export function updateRemotePlayers(dt: number): void {
 }
 
 export async function initMultiplayer(): Promise<void> {
-  setMultiplayerStatus(`部屋: ${roomId} 接続準備中`);
+  setMultiplayerStatus(
+    activeRoomId ? `部屋: ${activeRoomId} 接続準備中` : '待機できる部屋を検索しています…',
+  );
   manualWsClose = false;
   try {
+    await resolveLobbyIfNeeded();
+    setMultiplayerStatus(`部屋: ${activeRoomId} 参加処理中`);
     await joinRoom();
     multiplayerSessionActive = true;
     connectGameSocket();
   } catch (err) {
     multiplayerSessionActive = false;
-    setMultiplayerStatus(`部屋: ${roomId} 参加失敗`);
+    setMultiplayerStatus(activeRoomId ? `部屋: ${activeRoomId} 参加失敗` : '部屋への参加に失敗しました');
     console.error(err);
   }
 }
 
 export function cleanup(): void {
   multiplayerSessionActive = false;
-  disposeVotePreviews();
   if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
   wsReconnectTimer = null;
   manualWsClose = true;
@@ -529,7 +609,11 @@ export function cleanup(): void {
   gameSocket = null;
   clearRemotePlayers();
   localPlayerColor = '';
-  localModelTinted = false;
+  lastAppliedLocalTintHex = '';
+  const roomJustLeft = activeRoomId;
   void leaveRoom();
-  setMultiplayerStatus(`部屋: ${roomId} 未参加`);
+  if (roomJustLeft) excludeRoomAfterLeave = roomJustLeft;
+  activeRoomId = '';
+  stripRoomQueryFromUrl();
+  setMultiplayerStatus('未参加（次回「ゲーム参加」で部屋を検索します）');
 }
