@@ -2,22 +2,25 @@ package usecase
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strings"
 
+	"agent/internal/compose"
 	"agent/internal/domain"
 	"agent/internal/evidence"
-	"agent/internal/infrastructure/openai"
 	"agent/internal/policy"
 )
 
 type HintUsecase struct {
-	ai *openai.Client
+	llmComposer      compose.Composer
+	templateComposer compose.Composer
 }
 
-func NewHintUsecase(ai *openai.Client) *HintUsecase {
-	return &HintUsecase{ai: ai}
+func NewHintUsecase(llmComposer, templateComposer compose.Composer) *HintUsecase {
+	return &HintUsecase{
+		llmComposer:      llmComposer,
+		templateComposer: templateComposer,
+	}
 }
 
 // Generate は HintRequest を受け取り、OpenAI でヒントを生成して返す。
@@ -27,23 +30,30 @@ func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (dom
 	hintPolicy := policy.BuildHintPolicy(hintEvidence)
 
 	if hintPolicy.Action == policy.ActionInformationPending {
-		return domain.HintResponse{Text: fallbackHint(hintEvidence, hintPolicy)}, nil
+		return domain.HintResponse{Text: u.composeTemplate(ctx, hintEvidence, hintPolicy)}, nil
 	}
 
-	userPrompt := buildUserPrompt(hintEvidence, hintPolicy)
-
-	text, err := u.ai.ChatCompletion(ctx, systemPrompt, userPrompt)
+	text, err := u.llmComposer.Compose(ctx, hintEvidence, hintPolicy)
 	if err != nil {
 		log.Printf("[agent] OpenAI error, falling back: %v", err)
-		return domain.HintResponse{Text: fallbackHint(hintEvidence, hintPolicy)}, nil
+		return domain.HintResponse{Text: u.composeTemplate(ctx, hintEvidence, hintPolicy)}, nil
 	}
 
 	text = sanitize(text)
 	if text == "" {
-		return domain.HintResponse{Text: fallbackHint(hintEvidence, hintPolicy)}, nil
+		return domain.HintResponse{Text: u.composeTemplate(ctx, hintEvidence, hintPolicy)}, nil
 	}
 
 	return domain.HintResponse{Text: text}, nil
+}
+
+func (u *HintUsecase) composeTemplate(ctx context.Context, ev evidence.HintEvidence, hintPolicy policy.HintPolicy) string {
+	text, err := u.templateComposer.Compose(ctx, ev, hintPolicy)
+	if err != nil {
+		log.Printf("[agent] template compose error: %v", err)
+		return "情報収集中…しばらくお待ちください"
+	}
+	return sanitize(text)
 }
 
 func sanitize(s string) string {
@@ -76,35 +86,4 @@ func sanitize(s string) string {
 		}
 	}
 	return strings.TrimSpace(s)
-}
-
-var fallbackTemplates = []string{
-	"%s。警戒せよ",
-	"%s。注意されたし",
-	"%s。動きを見逃すな",
-}
-
-func fallbackHint(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) string {
-	if ev.Enemy == nil || hintPolicy.Action == policy.ActionInformationPending {
-		return "情報収集中…しばらくお待ちください"
-	}
-
-	parts := orderedHintParts(ev, hintPolicy)
-	if len(parts) == 0 {
-		return "不審な動きあり。警戒せよ"
-	}
-
-	if hintPolicy.Signals.UseThemeMismatch {
-		parts = append(parts, "周囲と噛み合わない")
-	}
-
-	tpl := fallbackTemplates[ev.Request.HintNumber%len(fallbackTemplates)]
-	maxParts := 2
-	if hintPolicy.Specificity == policy.SpecificityHigh {
-		maxParts = 3
-	}
-	if len(parts) > maxParts {
-		parts = parts[:maxParts]
-	}
-	return fmt.Sprintf(tpl, strings.Join(parts, "、"))
 }

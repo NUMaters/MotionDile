@@ -1,15 +1,28 @@
-package usecase
+package compose
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"agent/internal/domain"
 	"agent/internal/evidence"
+	"agent/internal/llm"
 	"agent/internal/policy"
 )
 
-func TestBuildUserPrompt_UsesPolicyAndOmitsIdentifiers(t *testing.T) {
+type fakeLLMClient struct {
+	input  llm.PromptInput
+	output string
+	err    error
+}
+
+func (f *fakeLLMClient) Generate(_ context.Context, input llm.PromptInput) (string, error) {
+	f.input = input
+	return f.output, f.err
+}
+
+func TestLLMComposer_BuildsPromptAndOmitsIdentifiers(t *testing.T) {
 	req := domain.HintRequest{
 		RoomID:       "room-1",
 		HintNumber:   2,
@@ -46,7 +59,12 @@ func TestBuildUserPrompt_UsesPolicyAndOmitsIdentifiers(t *testing.T) {
 
 	ev := evidence.BuildHintEvidence(req)
 	hintPolicy := policy.BuildHintPolicy(ev)
-	prompt := buildUserPrompt(ev, hintPolicy)
+	client := &fakeLLMClient{output: "dummy"}
+	composer := NewLLMComposer(client)
+
+	if _, err := composer.Compose(context.Background(), ev, hintPolicy); err != nil {
+		t.Fatalf("compose returned error: %v", err)
+	}
 
 	forbiddenFragments := []string{
 		"Enemy",
@@ -57,8 +75,8 @@ func TestBuildUserPrompt_UsesPolicyAndOmitsIdentifiers(t *testing.T) {
 		"0.25",
 	}
 	for _, fragment := range forbiddenFragments {
-		if strings.Contains(prompt, fragment) {
-			t.Fatalf("prompt should omit forbidden fragment %q: %s", fragment, prompt)
+		if strings.Contains(client.input.User, fragment) {
+			t.Fatalf("prompt should omit forbidden fragment %q: %s", fragment, client.input.User)
 		}
 	}
 
@@ -73,26 +91,8 @@ func TestBuildUserPrompt_UsesPolicyAndOmitsIdentifiers(t *testing.T) {
 		"市民側の流れと噛み合わない",
 	}
 	for _, fragment := range requiredFragments {
-		if !strings.Contains(prompt, fragment) {
-			t.Fatalf("prompt should contain %q: %s", fragment, prompt)
+		if !strings.Contains(client.input.User, fragment) {
+			t.Fatalf("prompt should contain %q: %s", fragment, client.input.User)
 		}
-	}
-}
-
-func TestFallbackHint_RespectsInformationPending(t *testing.T) {
-	ev := evidence.BuildHintEvidence(domain.HintRequest{
-		RoomID:       "room-1",
-		HintNumber:   1,
-		GameDuration: 30,
-		ElapsedSec:   2,
-		MapRadius:    1.3,
-		Players: []domain.PlayerInfo{
-			{PlayerID: "citizen-1", Animation: "Idle"},
-		},
-	})
-
-	text := fallbackHint(ev, policy.BuildHintPolicy(ev))
-	if text != "情報収集中…しばらくお待ちください" {
-		t.Fatalf("unexpected fallback text: %s", text)
 	}
 }

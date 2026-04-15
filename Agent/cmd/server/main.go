@@ -4,9 +4,10 @@ import (
 	"log"
 	"net/http"
 
+	"agent/internal/compose"
 	"agent/internal/config"
-	agenthttp "agent/internal/interface/http"
 	"agent/internal/infrastructure/openai"
+	agenthttp "agent/internal/interface/http"
 	"agent/internal/usecase"
 )
 
@@ -17,7 +18,9 @@ func main() {
 	}
 
 	ai := openai.NewClient(cfg.OpenAIKey)
-	uc := usecase.NewHintUsecase(ai)
+	llmComposer := compose.NewLLMComposer(ai)
+	templateComposer := compose.NewTemplateComposer()
+	uc := usecase.NewHintUsecase(llmComposer, templateComposer)
 	handler := agenthttp.NewHintHandler(uc)
 
 	mux := http.NewServeMux()
