@@ -46,6 +46,7 @@ let hadHandPrevFrame = false;
 
 let baseHandYaw: number | null = null;
 let baseHandPitch: number | null = null;
+let firstDetectionTime: number | null = null;
 
 /**
  * Hand Landmarker の .task（公式は float16 のみ配信。float32/latest は 404 になる）
@@ -418,67 +419,92 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   const ctx = camOverlay.getContext('2d');
   if (ctx) ctx.clearRect(0, 0, camOverlay.width, camOverlay.height);
 
-  // 手が画面から消えたら、基準角度をリセット（もう一度映すとそこが新しい正面になる）
+  // 手が画面から消えたら、すべてリセット（タイマーも！）
   if (!results.landmarks || results.landmarks.length === 0) {
     handState.detected = false;
     hadHandPrevFrame = false;
     baseHandYaw = null;
     baseHandPitch = null;
+    firstDetectionTime = null; // ★リセット
     return;
   }
   handState.detected = true;
   const rawLm = results.landmarks[0];
 
-  // (1-x, 1-y) に変換して、非ミラー映像の操作方向を合わせる
+  // (1-x, 1-y) に変換
   const lm = rawLm.map(p => ({ x: 1 - p.x, y: 1 - p.y, z: p.z }));
 
-  // 1. 各ポイントの定義（中指12番が鼻先）
+  // 1. 各ポイントの定義
   const vWrist      = new THREE.Vector3(lm[0].x, lm[0].y, lm[0].z);
   const vMiddleBase = new THREE.Vector3(lm[9].x, lm[9].y, lm[9].z);
   const vMiddleTip  = new THREE.Vector3(lm[12].x, lm[12].y, lm[12].z);
   const vThumbTip   = new THREE.Vector3(lm[4].x, lm[4].y, lm[4].z);
 
-  // 2. 首の向きの計算
-  const handAxis = new THREE.Vector3().subVectors(vMiddleBase, vWrist).normalize();
-
-  // 現在の手の絶対角度を計算
-  const currentYaw = Math.asin(handAxis.x);
-  const currentPitch = Math.asin(handAxis.y);
-
-  // ★オートセンタリング：最初に見つけた時の角度を「正面（ゼロ）」として記憶する
-  if (baseHandYaw === null || baseHandPitch === null) {
-    baseHandYaw = currentYaw;
-    baseHandPitch = currentPitch;
-  }
-
-  // 基準（最初に見つけた時の位置）からのズレを計算し、ゲイン（感度）をかける
-  const YAW_GAIN = 1.8;   // 左右の動きの大きさ（機敏さ）
-  const PITCH_GAIN = 1.8; // 上下の動きの大きさ
-
-  // ※軸の反転を修正済み（先頭にマイナス）。右に動かせば右を向きます。
-  const rawYaw = (currentYaw - baseHandYaw) * YAW_GAIN;
-  const rawPitch = -(currentPitch - baseHandPitch) * PITCH_GAIN;
-
-  // 3. 口の開閉（角度ベース）
+  // ★ 2. 口の開閉（待機中も口だけは動かせるように、先に計算します）
   const vecToMiddle = new THREE.Vector3().subVectors(vMiddleTip, vMiddleBase).normalize();
   const vecToThumb = new THREE.Vector3().subVectors(vThumbTip, vMiddleBase).normalize();
   const mouthAngle = vecToMiddle.angleTo(vecToThumb);
 
-  const MOUTH_CLOSE_ANGLE = 0.3; // これ以下の角度なら口を完全に閉じる
-  const MOUTH_OPEN_ANGLE = 0.8;  // これ以上の角度なら口を全開にする
+  const MOUTH_CLOSE_ANGLE = 0.3;
+  const MOUTH_OPEN_ANGLE = 0.8;
   const openness = (mouthAngle - MOUTH_CLOSE_ANGLE) / (MOUTH_OPEN_ANGLE - MOUTH_CLOSE_ANGLE);
+  handState.mouthOpenness = Math.max(0, Math.min(1, openness));
 
-  // 4. クランプしてステートに反映
-  const YAW_LIMIT = 0.8;   // 首が折れないようにする限界角度
+  // 3. 首の向きの計算
+  const handAxis = new THREE.Vector3().subVectors(vMiddleBase, vWrist).normalize();
+  const currentYaw = Math.asin(handAxis.x);
+  const currentPitch = Math.asin(handAxis.y);
+
+  // =======================================================
+  // 🐊 1秒遅延（ディレイ）オートセンタリング
+  // =======================================================
+  if (firstDetectionTime === null) {
+    // 手が映った最初のフレームの時間を記録 (ミリ秒)
+    firstDetectionTime = performance.now(); 
+  }
+
+  if (baseHandYaw === null || baseHandPitch === null) {
+    const elapsed = performance.now() - firstDetectionTime;
+    
+    if (elapsed < 1000) { // ★ 1000ミリ秒（1秒）未満なら
+      // 首の動きを「正面」でロックして待機
+      handState.neckYaw = 0;
+      handState.neckPitch = 0;
+      
+      // デバッグ描画（準備中は黄色で表示）
+      if (ctx) {
+        ctx.fillStyle = '#ffff00'; // Yellow
+        for (const p of rawLm) {
+          ctx.beginPath(); ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 3, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      return; // 首の計算はスキップしてここで終了
+      
+    } else {
+      // ★ 1秒経過した瞬間に、その時の角度を「正面」として記憶！
+      baseHandYaw = currentYaw;
+      baseHandPitch = currentPitch;
+    }
+  }
+
+  // 4. 基準からのズレを計算して動かす
+  const YAW_GAIN = 1.8;
+  const PITCH_GAIN = 1.8;
+
+  // ※ もし先ほどのテストで左右が逆だった場合は、 (currentYaw - baseHandYaw) の先頭にマイナス - をつけてください！
+  const rawYaw = (currentYaw - baseHandYaw) * YAW_GAIN;
+  const rawPitch = -(currentPitch - baseHandPitch) * PITCH_GAIN;
+
+  // 5. クランプしてステートに反映
+  const YAW_LIMIT = 0.8;
   const PITCH_LIMIT = 0.5;
 
   handState.neckYaw = Math.max(-YAW_LIMIT, Math.min(YAW_LIMIT, rawYaw));
   handState.neckPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, rawPitch));
-  handState.mouthOpenness = Math.max(0, Math.min(1, openness));
 
-  // デバッグ描画
+  // デバッグ描画（準備完了後は緑色で表示）
   if (ctx) {
-    ctx.fillStyle = '#00ff88';
+    ctx.fillStyle = '#00ff88'; // Green
     for (const p of rawLm) {
       ctx.beginPath(); ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 3, 0, Math.PI * 2); ctx.fill();
     }
