@@ -37,6 +37,7 @@
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vitest/coverage-v8": "^3.2.4",
+    "@vue/test-utils": "^2.4.6",
     "concurrently": "^9.2.1",
     "happy-dom": "^20.9.0",
     "kill-port": "^2.0.1",

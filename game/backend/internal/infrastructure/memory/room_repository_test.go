@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"math/rand"
+	"sort"
 	"testing"
 
 	"waniar/game-backend/internal/domain/entity"
@@ -122,5 +124,80 @@ func TestRoomRepository_GameStateVoteAndListRoomIDs(t *testing.T) {
 	}
 	if len(ids) != 2 || ids[0] != "room-a" || ids[1] != "room-b" {
 		t.Fatalf("room ids must be sorted, got %#v", ids)
+	}
+}
+
+func TestRoomRepository_GetSnapshot_EmptyRoom(t *testing.T) {
+	ctx := context.Background()
+	r := NewRoomRepository()
+	snap, err := r.GetSnapshot(ctx, "no-such-room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Version != 0 || snap.RoomID != "no-such-room" || len(snap.Players) != 0 {
+		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+}
+
+func TestRoomRepository_RemovePlayer(t *testing.T) {
+	ctx := context.Background()
+	r := NewRoomRepository()
+	const room = "r-remove"
+	if _, err := r.Join(ctx, room, entity.PlayerState{PlayerID: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Join(ctx, room, entity.PlayerState{PlayerID: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := r.RemovePlayer(ctx, room, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Players) != 1 {
+		t.Fatalf("players=%d", len(snap.Players))
+	}
+}
+
+func TestRoomRepository_GetGameState_PlayerCount(t *testing.T) {
+	ctx := context.Background()
+	r := NewRoomRepository()
+	const room = "r-gs"
+	if _, err := r.Join(ctx, room, entity.PlayerState{PlayerID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	gs, err := r.GetGameState(ctx, room)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gs.PlayerCount != 1 {
+		t.Fatalf("PlayerCount=%d", gs.PlayerCount)
+	}
+}
+
+func TestRoomRepository_PickEnemyAndGetPlayerIDs(t *testing.T) {
+	ctx := context.Background()
+	r := NewRoomRepository()
+	const room = "r-pick"
+	if _, err := r.Join(ctx, room, entity.PlayerState{PlayerID: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Join(ctx, room, entity.PlayerState{PlayerID: "y"}); err != nil {
+		t.Fatal(err)
+	}
+	rand.Seed(123)
+	enemy, err := r.PickEnemy(ctx, room)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enemy != "x" && enemy != "y" {
+		t.Fatalf("unexpected enemy %q", enemy)
+	}
+	ids, err := r.GetPlayerIDs(ctx, room)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(ids)
+	if len(ids) != 2 || ids[0] != "x" || ids[1] != "y" {
+		t.Fatalf("ids=%v", ids)
 	}
 }

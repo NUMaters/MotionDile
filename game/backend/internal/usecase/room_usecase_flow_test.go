@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"waniar/game-backend/internal/config"
@@ -106,5 +108,47 @@ func TestRoomUsecase_TallyVotes(t *testing.T) {
 	}
 	if !result.CitizensWin {
 		t.Fatal("citizens should win when enemy has max votes")
+	}
+}
+
+func TestRoomUsecase_ResolveLobby_EmptyPreferred_AutoCreate(t *testing.T) {
+	ctx := context.Background()
+	u := NewRoomUsecase(memory.NewRoomRepository(), "", config.Rules{MaxPlayers: 10})
+	id, redirected, reason, err := u.ResolveLobbyRoom(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !redirected || reason != "auto_create" {
+		t.Fatalf("want auto_create: redirected=%v reason=%q", redirected, reason)
+	}
+	if !strings.HasPrefix(id, "lobby-") {
+		t.Fatalf("unexpected id %q", id)
+	}
+}
+
+func TestRoomUsecase_Move_ErrInvalidInput(t *testing.T) {
+	ctx := context.Background()
+	u := NewRoomUsecase(memory.NewRoomRepository(), "", config.Rules{MaxPlayers: 10})
+	_, err := u.Move(ctx, MoveInput{RoomID: "", PlayerID: "p"})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestRoomUsecase_Snapshot_ErrInvalidInput(t *testing.T) {
+	ctx := context.Background()
+	u := NewRoomUsecase(memory.NewRoomRepository(), "", config.Rules{MaxPlayers: 10})
+	_, err := u.Snapshot(ctx, "  ")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestRoomUsecase_Leave_ErrInvalidInput(t *testing.T) {
+	ctx := context.Background()
+	u := NewRoomUsecase(memory.NewRoomRepository(), "", config.Rules{MaxPlayers: 10})
+	_, err := u.Leave(ctx, "", "p")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("got %v", err)
 	}
 }

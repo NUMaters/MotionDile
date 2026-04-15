@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/18</span>
+                <span class='fraction'>18/18</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">80% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>1/1</span>
+                <span class='fraction'>4/5</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>1/1</span>
+                <span class='fraction'>4/4</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/18</span>
+                <span class='fraction'>18/18</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -88,53 +88,53 @@
 <a name='L23'></a><a href='#L23'>23</a>
 <a name='L24'></a><a href='#L24'>24</a>
 <a name='L25'></a><a href='#L25'>25</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/** 画面上部のステータス行は廃止。#hud-text が無い場合は何もしない（互換 API のみ）。 */
-<span class="cstat-no" title="statement not covered" >const hudText = document.getElementById('hud-text') as HTMLElement | null;</span>
+const hudText = document.getElementById('hud-text') as HTMLElement | null;
 &nbsp;
-<span class="cstat-no" title="statement not covered" >let handModelStatus = '手モデル: 読み込み中';</span>
-<span class="cstat-no" title="statement not covered" >let multiplayerStatus = '';</span>
+let handModelStatus = '手モデル: 読み込み中';
+let multiplayerStatus = '';
 &nbsp;
-<span class="cstat-no" title="statement not covered" >export function setHandModelStatus(status: string): void {</span>
-<span class="cstat-no" title="statement not covered" >  handModelStatus = status;</span>
-<span class="cstat-no" title="statement not covered" >  refresh();</span>
-<span class="cstat-no" title="statement not covered" >}</span>
+export function setHandModelStatus(status: string): void {
+  handModelStatus = status;
+  refresh();
+}
 &nbsp;
-<span class="cstat-no" title="statement not covered" >export function setMultiplayerStatus(status: string): void {</span>
-<span class="cstat-no" title="statement not covered" >  multiplayerStatus = status;</span>
-<span class="cstat-no" title="statement not covered" >  refresh();</span>
-<span class="cstat-no" title="statement not covered" >}</span>
+export function setMultiplayerStatus(status: string): void {
+  multiplayerStatus = status;
+  refresh();
+}
 &nbsp;
-<span class="cstat-no" title="statement not covered" >function refresh(): void {</span>
-<span class="cstat-no" title="statement not covered" >  if (!hudText) return;</span>
-<span class="cstat-no" title="statement not covered" >  hudText.textContent = `${handModelStatus} | ${multiplayerStatus}`;</span>
-<span class="cstat-no" title="statement not covered" >}</span>
+function refresh(): void {
+  if (!hudText) <span class="branch-0 cbranch-no" title="branch not covered" >return;</span>
+  hudText.textContent = `${handModelStatus} | ${multiplayerStatus}`;
+}
 &nbsp;
-<span class="cstat-no" title="statement not covered" >export function refreshHud(): void {</span>
-<span class="cstat-no" title="statement not covered" >  refresh();</span>
-<span class="cstat-no" title="statement not covered" >}</span>
+export function refreshHud(): void {
+  refresh();
+}
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -142,7 +142,7 @@
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-15T19:01:28.531Z
+                at 2026-04-15T19:09:25.195Z
             </div>
         <script src="prettify.js"></script>
         <script>

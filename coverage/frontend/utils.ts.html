@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">46.66% </span>
+                <span class="strong">83.33% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>14/30</span>
+                <span class='fraction'>25/30</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">71.42% </span>
+                <span class="strong">72.72% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>5/7</span>
+                <span class='fraction'>8/11</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">60% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>3/5</span>
+                <span class='fraction'>5/5</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">46.66% </span>
+                <span class="strong">83.33% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>14/30</span>
+                <span class='fraction'>25/30</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -97,30 +97,30 @@
 <a name='L32'></a><a href='#L32'>32</a>
 <a name='L33'></a><a href='#L33'>33</a>
 <a name='L34'></a><a href='#L34'>34</a>
-<a name='L35'></a><a href='#L35'>35</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L35'></a><a href='#L35'>35</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">4x</span>
 <span class="cline-any cline-yes">4x</span>
 <span class="cline-any cline-yes">1x</span>
@@ -131,20 +131,20 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-yes">4x</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">export <span class="fstat-no" title="function not covered" >function getEl&lt;T extends HTMLElement&gt;(id: string): T {</span>
-<span class="cstat-no" title="statement not covered" >  const el = document.getElementById(id);</span>
-<span class="cstat-no" title="statement not covered" >  if (!el) throw new Error(`Missing element #${id}`);</span>
-<span class="cstat-no" title="statement not covered" >  return el as T;</span>
-<span class="cstat-no" title="statement not covered" >}</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">export function getEl&lt;T extends HTMLElement&gt;(id: string): T {
+  const el = document.getElementById(id);
+  if (!el) <span class="branch-0 cbranch-no" title="branch not covered" >throw new Error(`Missing element #${id}`);</span>
+  return el as T;
+}
 &nbsp;
-export <span class="fstat-no" title="function not covered" >function getOrCreatePlayerId(): string {</span>
-<span class="cstat-no" title="statement not covered" >  const key = 'waniar:player-id';</span>
-<span class="cstat-no" title="statement not covered" >  const existing = localStorage.getItem(key);</span>
-<span class="cstat-no" title="statement not covered" >  if (existing) return existing;</span>
-<span class="cstat-no" title="statement not covered" >  const generated = `p-${Math.random().toString(36).slice(2, 10)}`;</span>
-<span class="cstat-no" title="statement not covered" >  localStorage.setItem(key, generated);</span>
-<span class="cstat-no" title="statement not covered" >  return generated;</span>
-<span class="cstat-no" title="statement not covered" >}</span>
+export function getOrCreatePlayerId(): string {
+  const key = 'waniar:player-id';
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const generated = `p-${Math.random().toString(36).slice(2, 10)}`;
+  localStorage.setItem(key, generated);
+  return generated;
+}
 &nbsp;
 export function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -172,7 +172,7 @@ export function errorToText(err: unknown): string {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-15T19:01:28.531Z
+                at 2026-04-15T19:09:25.195Z
             </div>
         <script src="prettify.js"></script>
         <script>

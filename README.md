@@ -18,12 +18,12 @@
 
 | コマンド | 内容 |
 |---|---|
-| `npm run test` | フロント（Vitest・Node 環境）。毎回 `node_modules/.vitest` と `coverage/` を削除してから `--coverage` 付きで `game/frontend/src/**/*.test.ts` を実行（`utils`・`game-rules`・`neck-sync`・`player-names`・`icons`・`ui-layout` など） |
+| `npm run test` | フロント（Vitest）。毎回 `node_modules/.vitest` と `coverage/` を削除してから `--coverage` で `game/frontend/src/**/*.test.ts` および `App.vue.test.ts` を実行（`world`・`character`・`hud`・`input`・`device-look`・`screens`・`vote-previews`・`network`（依存モック）・Vue の `App.vue` など。`window` が必要なモジュールは該当ファイルで **happy-dom** を指定） |
 | `npm run test:watch` | 上記をウォッチモード |
 | `npm run test:backend` | `go clean -C game/backend -cache -testcache` 後に `game/backend` で `go test ./... -coverprofile=coverage.out` を実行し、`go tool cover -func=coverage.out` で集計を表示 |
 | `npm run test:all` | Vitest のあとバックエンド Go を続けて実行 |
 
-`game-rules` のテストでは `config.ts` がブラウザ API（`window`）に依存するため、`GAME_RULES` を `vi.mock('./config')` で差し替えています。`player-names` / `ui-layout` は `localStorage` や `document` / `window` をテスト内でスタブしています。`icons` と `name-labels` は DOM API を使うため、当該テストは **happy-dom** 環境（ファイル先頭の `@vitest-environment`）で実行します。首の相対回転は `neck-sync.ts` の `composeNeckDeltaQuaternion`（`ZXY`）を Three.js で検証します。バックエンドは `internal/config` で `WANIAR_*` を `t.Setenv` し、`internal/usecase` で `Join` に加えて `ResolveLobbyRoom` / `Move` / `TallyVotes` のフロー、`internal/domain/entity` でプレイヤー色配列、`internal/infrastructure/memory` で in-memory リポジトリの Join/Upsert/Vote/RoomID ソート、`PickThemes` の味方/敵テーマ不一致を Go で検証します。
+`game-rules` のテストでは `config.ts` がブラウザ API（`window`）に依存するため、`GAME_RULES` を `vi.mock('./config')` で差し替えています。`player-names` / `ui-layout` は `localStorage` や `document` / `window` をテスト内でスタブしています。`icons`・`name-labels`・`App.vue`（`@vue/test-utils`）は DOM が必要なため **happy-dom** を使います。`network.ts` は依存を `vi.mock` してエントリのみ検証します。**WebGL 初期化の `scene.ts`・巨大な `bootstrapGame.ts`・MediaPipe の `hand-tracking.ts`・`main.ts` のエントリ**は実機／E2E 前提とし、単体テストの対象外です。バックエンドは `internal/config` の `WANIAR_*`、`internal/usecase`（`Join`・`ResolveLobbyRoom`・`Move`・`Leave`・`TallyVotes` 等）、`internal/infrastructure/memory`（`repository.RoomRepository` 実装のコンパイル時チェック含む）、`internal/interface/http`（Gin + `httptest`）、`internal/interface/ws`（`buildCheckOrigin` / `uniformCryptoIndex`）を Go で検証します。
 
 ## アニメーションクリップ
 

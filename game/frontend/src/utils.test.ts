@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { clamp, smoothToward, errorToText } from './utils';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { clamp, smoothToward, errorToText, getOrCreatePlayerId } from './utils';
 
 describe('clamp', () => {
   it('範囲内はそのまま', () => {
@@ -38,5 +38,35 @@ describe('errorToText', () => {
   it('nullish は unknown', () => {
     expect(errorToText(null)).toBe('unknown');
     expect(errorToText(undefined)).toBe('unknown');
+  });
+});
+
+describe('getOrCreatePlayerId', () => {
+  const store: Record<string, string> = {};
+
+  beforeEach(() => {
+    Object.keys(store).forEach((k) => delete store[k]);
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (k in store ? store[k] : null),
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+      clear: () => {
+        Object.keys(store).forEach((k) => delete store[k]);
+      },
+      key: (i: number) => Object.keys(store)[i] ?? null,
+      get length() {
+        return Object.keys(store).length;
+      },
+    } as Storage);
+  });
+
+  it('未保存なら生成して保存', () => {
+    const a = getOrCreatePlayerId();
+    expect(a.startsWith('p-')).toBe(true);
+    expect(getOrCreatePlayerId()).toBe(a);
   });
 });
