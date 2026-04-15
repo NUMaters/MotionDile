@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-"scripts": {
+  "scripts": {
     "build:model": "node modeling/scripts/build-wani-game-model.mjs",
     "viewer": "npx serve modeling -l 3000 --no-clipboard",
     "dev": "vite",

@@ -33,20 +33,20 @@ type JoinInput struct {
 	DisplayName string
 }
 
-type MoveInput struct {
-	RoomID    string
-	PlayerID  string
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	Z         float64 `json:"z"`
-	RotationY float64 `json:"rotationY"`
-	NeckYaw   float64 `json:"neckYaw"`
-	NeckPitch float64 `json:"neckPitch"`
+type MovaeInput struct {
+	RoomID        string
+	PlayerID      string
+	X             float64 `json:"x"`
+	Y             float64 `json:"y"`
+	Z             float64 `json:"z"`
+	RotationY     float64 `json:"rotationY"`
+	NeckYaw       float64 `json:"neckYaw"`
+	NeckPitch     float64 `json:"neckPitch"`
 	Animation     string  `json:"animation"`
 	MouthOpenness float64 `json:"mouthOpenness"`
 	IdleBob       float64 `json:"idleBob"`
-	IdlePitch float64 `json:"idlePitch"`
-	IdleRoll  float64 `json:"idleRoll"`
+	IdlePitch     float64 `json:"idlePitch"`
+	IdleRoll      float64 `json:"idleRoll"`
 }
 
 type RoomUsecase struct {

@@ -135,8 +135,8 @@ npm run build:model   # Wani_game.glb を生成
 npm run viewer        # http://localhost:3000/viewer でビューア起動
 npm run dev           # Go backend(8080) + Vite frontend(5173~) を同時起動
 npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + WebSocket, 8090）
-npm run dev:all       # game backend(8090) + agent(8091) + medea backend(8080) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）
-npm run down:all      # dev:all で使う 5173/8080/8090/8091 を一括停止（`scripts/down-all.mjs` + kill-port。macOS / Windows 共通）
+npm run dev:all       # game backend(8090) + agent(8091) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）
+npm run down:all      # dev:all で使う 5173/8090/8091 を一括停止（`scripts/down-all.mjs` + kill-port。macOS / Windows 共通）
 npm run pipeline:train:example  # サンプルデータから手モデル生成（public/models/hand-control-model.json）
 ```
 
