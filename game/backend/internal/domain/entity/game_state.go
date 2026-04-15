@@ -13,7 +13,11 @@ const (
 type GameState struct {
 	Phase         GamePhase         `json:"phase"`
 	EnemyPlayerID string            `json:"enemyPlayerId,omitempty"`
-	Votes         map[string]string `json:"votes,omitempty"`
+	// RoundPlayerIDs は game_start 時点で WebSocket 接続していたプレイヤー（このラウンドの参加者）
+	RoundPlayerIDs []string `json:"roundPlayerIds,omitempty"`
+	AllyTheme      string   `json:"allyTheme,omitempty"`
+	EnemyTheme     string   `json:"enemyTheme,omitempty"`
+	Votes          map[string]string `json:"votes,omitempty"`
 	CountdownEnd  int64             `json:"countdownEnd,omitempty"`
 	GameEnd       int64             `json:"gameEnd,omitempty"`
 	VoteEnd       int64             `json:"voteEnd,omitempty"`
@@ -28,6 +32,7 @@ type HintInfo struct {
 
 type VoteResult struct {
 	EnemyPlayerID string            `json:"enemyPlayerId"`
+	EnemyColor    string            `json:"enemyColor,omitempty"`
 	Votes         map[string]string `json:"votes"`
 	VoteCounts    map[string]int    `json:"voteCounts"`
 	CitizensWin   bool              `json:"citizensWin"`

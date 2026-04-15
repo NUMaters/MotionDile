@@ -2,24 +2,11 @@
   <div class="game-shell">
     <canvas id="game-canvas" />
 
-    <div id="compass" class="hidden">
-      <svg viewBox="0 0 52 52">
-        <circle cx="26" cy="26" r="25" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.3)" stroke-width="1" />
-        <g class="compass-needle">
-          <polygon points="26,6 22,28 26,25 30,28" fill="#e74c3c" />
-          <polygon points="26,46 22,28 26,31 30,28" fill="#ccc" />
-        </g>
-        <text x="26" y="10" text-anchor="middle" fill="#e74c3c" font-size="7" font-weight="bold">N</text>
-      </svg>
-    </div>
-
     <div id="loading">
       <h1>WaniAR</h1>
       <div class="bar"><div id="load-bar" class="bar-fill" /></div>
       <p id="load-text">読み込み中…</p>
     </div>
-
-    <div id="hud"><span id="hud-text" /></div>
 
     <!-- Home Screen -->
     <div id="screen-home" class="screen-overlay hidden">
@@ -79,12 +66,9 @@
     <!-- Game HUD (transparent overlay) -->
     <div id="screen-game-hud" class="screen-overlay hidden">
       <div id="game-timer">30</div>
-      <div id="game-role-badge" />
-    </div>
-    <div id="hint-popup" role="status" aria-live="polite">
-      <div class="hint-popup-card">
-        <div class="hint-popup-badge"><span id="hint-icon" aria-hidden="true" /> Agent からの情報</div>
-        <p id="hint-popup-body"></p>
+      <div id="game-hud-banner">
+        <div id="game-role-badge" />
+        <div id="agent-hint-danmaku" class="agent-hint-danmaku" aria-live="polite" />
       </div>
     </div>
 
@@ -102,7 +86,14 @@
     <!-- Results Screen -->
     <div id="screen-results" class="screen-overlay hidden">
       <div id="result-title" class="result-title" />
-      <div id="result-enemy" class="result-enemy" />
+      <div class="result-enemy-block">
+        <div
+          id="result-enemy-preview-mount"
+          class="vote-preview-mount result-enemy-preview-mount"
+          aria-hidden="true"
+        />
+        <div id="result-enemy" class="result-enemy" />
+      </div>
       <div id="result-detail" class="result-detail" />
       <button id="btn-back-home" type="button">ホームに戻る</button>
     </div>

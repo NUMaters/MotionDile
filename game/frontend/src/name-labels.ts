@@ -1,5 +1,6 @@
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import * as THREE from 'three';
+import { FALLBACK_PLAYER_COLOR } from './config';
 
 let labelRenderer: CSS2DRenderer | null = null;
 
@@ -35,15 +36,28 @@ export function renderLabels(scene: THREE.Scene, camera: THREE.Camera): void {
  * ローカル座標系で高さ約 0.15（= ワールド 0.30）程度なので、
  * ローカル Y=0.20 ≈ ワールド 0.40 で頭上に来る。
  */
-export function createNameLabel(name: string): CSS2DObject {
+/** マッチング／サーバー `PlayerState.color` と同じ色で枠線を付ける */
+export function applyPlayerLabelAccent(el: HTMLElement, color: string | undefined): void {
+  const c = color && color.trim() !== '' ? color.trim() : FALLBACK_PLAYER_COLOR;
+  el.style.border = `2px solid ${c}`;
+  el.style.boxShadow = '0 3px 10px rgba(0,0,0,0.45)';
+}
+
+export function setNameLabelAccent(label: unknown, color: string | undefined): void {
+  const obj = label as { element?: HTMLElement };
+  if (!obj?.element) return;
+  applyPlayerLabelAccent(obj.element, color);
+}
+
+export function createNameLabel(name: string, accentColor?: string): CSS2DObject {
   const div = document.createElement('div');
   div.className = 'player-name-label';
   div.textContent = name || '';
   div.style.opacity = name ? '1' : '0';
+  applyPlayerLabelAccent(div, accentColor);
   const label = new CSS2DObject(div);
   label.position.set(0, 0.20, 0);
   label.center.set(0.5, 1);
-  console.log('[name-labels] createNameLabel:', name, 'pos:', label.position.y);
   return label;
 }
 
@@ -60,10 +74,13 @@ export function autoPositionLabel(label: CSS2DObject, modelRoot: THREE.Object3D)
   label.position.set(0, localTopFromRoot + 0.005, 0);
 }
 
-export function updateNameLabelText(label: unknown, name: string): void {
+export function updateNameLabelText(label: unknown, name: string, accentColor?: string): void {
   const obj = label as CSS2DObject;
   if (!obj?.element) return;
   const el = obj.element as HTMLDivElement;
   el.textContent = name || '';
   el.style.opacity = name ? '1' : '0';
+  if (accentColor !== undefined) {
+    applyPlayerLabelAccent(el, accentColor);
+  }
 }

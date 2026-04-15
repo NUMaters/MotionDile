@@ -21,6 +21,12 @@ REST API は部屋/プレイヤー管理、WebSocket は部屋内の移動同期
 - `GET /api/v1/rooms/:roomID/snapshot`
 - `DELETE /api/v1/rooms/:roomID/players/:playerID`
 
+## 敵ワニ（敵陣営）の抽選
+
+- ラウンド開始時（`startGame`）、当該部屋の WebSocket 接続者から **重複のない `playerId` 一覧**を作り、その中から **1 人を敵**に選ぶ。
+- 抽選インデックスは **`crypto/rand`**（失敗時のみ `math/rand` にフォールバック）。参加者 ID は **`sort.Strings` でソートした順**に並べたうえでインデックス指定するため、マップ走査順に依存しない。
+- **同一ブラウザで複数タブを開いた場合**は `localStorage` の `playerId` が共有されるため、論理プレイヤーは 1 人扱いになり、敵候補も 1 人だけになる（常にそのプレイヤーが敵になる）。複数人でランダム性を確認する場合は **端末・ブラウザプロファイルを分ける**。
+
 ## WebSocket
 
 - `GET /ws?roomId=<room>&playerId=<player>`

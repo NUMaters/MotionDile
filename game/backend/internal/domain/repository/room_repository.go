@@ -16,4 +16,5 @@ type RoomRepository interface {
 	PickEnemy(ctx context.Context, roomID string) (string, error)
 	CastVote(ctx context.Context, roomID, voterID, votedForID string) (entity.GameState, error)
 	GetPlayerIDs(ctx context.Context, roomID string) ([]string, error)
+	ListRoomIDs(ctx context.Context) ([]string, error)
 }
