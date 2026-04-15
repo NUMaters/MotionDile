@@ -451,7 +451,9 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   handState.mouthOpenness = Math.max(0, Math.min(1, openness));
 
   // 3. 首の向きの計算
-  const handAxis = new THREE.Vector3().subVectors(vMiddleBase, vWrist).normalize();
+  //const handAxis = new THREE.Vector3().subVectors(vMiddleBase, vWrist).normalize();
+  // 手首から「中指の先端（鼻先）」へのベクトルを完全な基準軸とする！
+  const handAxis = new THREE.Vector3().subVectors(vMiddleTip, vWrist).normalize();
   const currentYaw = Math.asin(handAxis.x);
   const currentPitch = Math.asin(handAxis.y);
 
