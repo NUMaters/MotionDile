@@ -1,6 +1,6 @@
 import type { AnimationClip, Group } from 'three';
 import { getEl } from './utils';
-import { FLAT_WORLD_MODE } from './config';
+import { FLAT_WORLD_MODE, FALLBACK_PLAYER_COLOR } from './config';
 import { mountVotePreviews, disposeVotePreviews } from './vote-previews';
 import { resolveDisplayName } from './player-names';
 import { IC } from './icons';
@@ -19,6 +19,7 @@ const screenIds: Record<Exclude<ScreenName, 'none'>, string> = {
 let currentScreen: ScreenName = 'none';
 
 export function showScreen(name: ScreenName): void {
+  if (name === 'home') disposeVotePreviews();
   for (const [key, id] of Object.entries(screenIds)) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -42,13 +43,13 @@ export function getCurrentScreen(): ScreenName {
 
 // ─── Tutorial（実際のUIに近いデモ付き） ───
 const jumpNote = FLAT_WORLD_MODE
-  ? 'ジャンプ：画面の空いている所を<strong>素早く2回タップ</strong>'
+  ? 'ジャンプ：画面を<strong>素早く2回タップ</strong>'
   : '（このマップではジャンプはありません）';
 
 const tutorialPagesHtml: string[] = [
   `
   <h2>${IC.gamepad(22)} 歩く・走る</h2>
-  <p class="tut-lead">左下の丸いコントローラーがジョイスティックです</p>
+  <p class="tut-lead">ジョイスティック</p>
   <div class="tut-demo tut-demo-joystick" aria-hidden="true">
     <div class="tut-run-ring"></div>
     <div class="tut-joy-base"></div>
@@ -58,7 +59,7 @@ const tutorialPagesHtml: string[] = [
   `,
   `
   <h2>${IC.eye(22)} 見まわす</h2>
-  <p class="tut-lead">左の丸いボタンでカメラを正面に戻せるよ</p>
+  <p class="tut-lead">カメラを正面に戻すボタン</p>
   <div class="tut-demo tut-demo-look">
     <button type="button" class="tut-look-fake" tabindex="-1" aria-hidden="true">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -70,20 +71,20 @@ const tutorialPagesHtml: string[] = [
   `
   <h2>${IC.zap(22)} ジャンプ・顎の操作</h2>
   <p class="tut-body">${jumpNote}</p>
-  <p class="tut-body">口の開き：<strong>カメラに手をかざして開閉する</strong></p>
-  <p class="tut-body">顎の操作：<strong>カメラに手をかざして上下左右に動かす</strong></p>
+  <p class="tut-body">口の開き：<strong>手をかざして開閉する</strong></p>
+  <p class="tut-body">顎の操作：<strong>手をかざして上下左右に動かす</strong></p>
   `,
   `
   <h2>${IC.swords(22)} ゲームのルール</h2>
-  <p class="tut-body">プレイヤーの中に<strong>敵ワニが1匹</strong>います。<br>30秒のあいだに<strong>見た目や動き</strong>を覚えて、投票で当てよう！</p>
+  <p class="tut-body">ゲーム開始時に<strong>行動ミッション</strong>が表示されます。<br><strong>皆と違う動きをしている敵ワニ</strong>を探そう！</p>
   `,
   `
   <h2>${IC.search(22)} Agentのヒント</h2>
-  <p class="tut-body">10秒ごとに<strong>Agent</strong>から、敵ワニの<strong>だいたいの場所</strong>や<strong>歩き／走り</strong>のヒントが届くよ。</p>
+  <p class="tut-body">15秒ごとに<strong>Agent</strong>から、敵ワニの<strong>行動パターン</strong>や<strong>位置</strong>のヒントが届くよ。</p>
   `,
   `
   <h2>${IC.vote(22)} 投票</h2>
-  <p class="tut-body">ゲームが終わったら<strong>ワニの見た目</strong>を思い出して投票！いちばん票を集めた人が本当の敵ワニなら<strong>市民チームの勝ち</strong>！</p>
+  <p class="tut-body">ミッションと<strong>違う動きをしていた</strong>プレイヤーに投票！<br>いちばん票を集めた人が本当の敵ワニなら<strong>市民チームの勝ち</strong>！</p>
   `,
 ];
 
@@ -223,7 +224,7 @@ export function updateMatchmakingPlayers(players: { displayName: string; color: 
   listEl.innerHTML = players
     .map((p) => {
       const name = p.displayName || 'プレイヤー';
-      const dot = `<span class="match-player-dot" style="background:${escapeHtml(p.color || '#58a6ff')}"></span>`;
+      const dot = `<span class="match-player-dot" style="background:${escapeHtml(p.color || FALLBACK_PLAYER_COLOR)}"></span>`;
       return `<div class="match-player-item">${dot}<span class="match-player-name">${escapeHtml(name)}</span></div>`;
     })
     .join('');
@@ -233,21 +234,22 @@ export function updateMatchmakingPlayers(players: { displayName: string; color: 
 let gameTimerInterval: number | null = null;
 let playerRole: 'citizen' | 'enemy' = 'citizen';
 
-export function startGameHud(gameEnd: number, role: string): void {
+function clearAgentHintDanmaku(): void {
+  document.getElementById('agent-hint-danmaku')?.replaceChildren();
+}
+
+export function startGameHud(gameEnd: number, role: string, theme?: string): void {
   playerRole = role === 'enemy' ? 'enemy' : 'citizen';
   showScreen('game-hud');
+  clearAgentHintDanmaku();
 
   const timerEl = document.getElementById('game-timer');
   const badgeEl = document.getElementById('game-role-badge');
 
   if (badgeEl) {
-    if (playerRole === 'enemy') {
-      badgeEl.innerHTML = `${IC.shieldAlert(18)} あなたは敵ワニ！バレないように行動せよ`;
-      badgeEl.className = 'role-enemy';
-    } else {
-      badgeEl.innerHTML = `${IC.user(18)} あなたは市民。敵ワニを見つけろ！`;
-      badgeEl.className = 'role-citizen';
-    }
+    const themeText = theme || '周囲を見ながら自由に動こう';
+    badgeEl.innerHTML = `${IC.target(15)} <strong>${escapeHtml(themeText)}</strong>`;
+    badgeEl.className = 'role-theme';
   }
 
   if (gameTimerInterval != null) window.clearInterval(gameTimerInterval);
@@ -261,13 +263,40 @@ export function startGameHud(gameEnd: number, role: string): void {
   }, 200);
 }
 
+/** Agent ヒントをテーマ表示の下へ弾幕のように横スクロールで表示 */
 export function showHint(text: string): void {
-  const popup = document.getElementById('hint-popup');
-  const body = document.getElementById('hint-popup-body');
-  if (!popup) return;
-  if (body) body.textContent = text;
-  popup.classList.add('visible');
-  setTimeout(() => popup.classList.remove('visible'), 4500);
+  const container = document.getElementById('agent-hint-danmaku');
+  if (!container || !text.trim()) return;
+
+  const row = document.createElement('div');
+  row.className = 'agent-danmaku-row';
+  const span = document.createElement('span');
+  span.className = 'agent-danmaku-text';
+  span.textContent = text;
+  row.appendChild(span);
+  container.appendChild(row);
+
+  requestAnimationFrame(() => {
+    const cw = row.clientWidth;
+    const tw = span.offsetWidth;
+    if (tw === 0) {
+      row.remove();
+      return;
+    }
+    const speedPps = 88;
+    const dist = cw + tw;
+    const sec = Math.min(28, Math.max(7, dist / speedPps));
+    const anim = span.animate(
+      [
+        { transform: `translateX(${cw}px)` },
+        { transform: `translateX(${-tw}px)` },
+      ],
+      { duration: sec * 1000, easing: 'linear', fill: 'forwards' },
+    );
+    anim.onfinish = () => {
+      row.remove();
+    };
+  });
 }
 
 // ─── Voting ───
@@ -300,7 +329,7 @@ export function startVoting(
       .map(
         (p) => {
           const label = (p.displayName || '').trim() || p.playerId.slice(0, 8);
-          const col = p.color || '#58a6ff';
+          const col = p.color || FALLBACK_PLAYER_COLOR;
           return `<div class="vote-card" data-pid="${p.playerId}" data-color="${col}">
             <div class="vote-preview-mount"></div>
             <div class="vote-name">${escapeHtml(label)}</div>
@@ -340,12 +369,12 @@ export function startVoting(
   if (listEl && others.length) {
     if (preview) {
       const mounts = Array.from(listEl.querySelectorAll('.vote-preview-mount')) as HTMLElement[];
-      const colors = others.map((p) => p.color || '#58a6ff');
+      const colors = others.map((p) => p.color || FALLBACK_PLAYER_COLOR);
       mountVotePreviews(mounts, colors, preview.template, preview.clips);
     } else {
       for (const m of listEl.querySelectorAll('.vote-preview-mount')) {
         const card = m.closest('.vote-card');
-        const col = (card as HTMLElement)?.dataset.color || '#58a6ff';
+        const col = (card as HTMLElement)?.dataset.color || FALLBACK_PLAYER_COLOR;
         m.innerHTML = `<div class="vote-preview-fallback" style="background:${col}"></div>`;
       }
     }
@@ -376,6 +405,8 @@ export function showResults(
   enemyPlayerId: string,
   voteCounts: Record<string, number>,
   role: string,
+  enemyColor?: string,
+  preview?: { template: Group; clips: AnimationClip[] } | null,
 ): void {
   disposeVotePreviews();
   showScreen('results');
@@ -383,6 +414,7 @@ export function showResults(
   const titleEl = document.getElementById('result-title');
   const enemyEl = document.getElementById('result-enemy');
   const detailEl = document.getElementById('result-detail');
+  const previewMount = document.getElementById('result-enemy-preview-mount');
 
   const youWin =
     (citizensWin && role === 'citizen') || (!citizensWin && role === 'enemy');
@@ -405,6 +437,15 @@ export function showResults(
         `${resolveDisplayName(pid)}: ${count}票${pid === enemyPlayerId ? ' ← 敵ワニ' : ''}`)
       .join('\n');
     detailEl.innerHTML = `<strong>${citizensWin ? '市民チームの勝利！' : '敵ワニの勝利！'}</strong><br><br>${lines.replace(/\n/g, '<br>')}`;
+  }
+
+  const col = enemyColor?.trim() || FALLBACK_PLAYER_COLOR;
+  if (previewMount) {
+    if (preview?.template && preview.clips.length) {
+      mountVotePreviews([previewMount as HTMLElement], [col], preview.template, preview.clips);
+    } else {
+      previewMount.innerHTML = `<div class="vote-preview-fallback" style="background:${col}">🐊</div>`;
+    }
   }
 }
 

@@ -28,14 +28,6 @@ body { position: relative; }
 #loading .bar { width: 200px; height: 4px; border-radius: 2px; background: #21262d; overflow: hidden; }
 #loading .bar-fill { height: 100%; width: 0%; background: #58a6ff; transition: width .15s; }
 
-/* --- HUD overlay --- */
-#hud {
-  position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
-  font-size: 11px; background: rgba(0,0,0,.14); padding: 4px 12px;
-  border-radius: 12px; pointer-events: none; white-space: nowrap; z-index: 10;
-  text-shadow: 0 1px 2px rgba(0,0,0,.5);
-}
-
 /* --- Touch joystick area (left) --- */
 #joystick-zone {
   position: fixed; left: 0; bottom: 0; width: 50%; height: 45%;
@@ -247,9 +239,10 @@ body { position: relative; }
   width: 148px;
   height: 118px;
 }
+/* 148px 幅の .tut-demo 内で 124px リングを水平中央: (148-124)/2 = 12px */
 #screen-home .home-tut-panel .tut-demo-joystick .tut-run-ring {
   position: absolute;
-  left: 4px;
+  left: 12px;
   bottom: 4px;
   width: 124px;
   height: 124px;
@@ -259,7 +252,7 @@ body { position: relative; }
 }
 #screen-home .home-tut-panel .tut-demo-joystick .tut-joy-base {
   position: absolute;
-  left: 26px;
+  left: 34px;
   bottom: 26px;
   width: 80px;
   height: 80px;
@@ -269,7 +262,7 @@ body { position: relative; }
 }
 #screen-home .home-tut-panel .tut-demo-joystick .tut-joy-thumb {
   position: absolute;
-  left: 54px;
+  left: 62px;
   bottom: 54px;
   width: 28px;
   height: 28px;
@@ -390,16 +383,17 @@ body { position: relative; }
 #screen-tutorial .tut-body strong { color: #f0c040; }
 /* ジョイスティック見本（実際の画面左下に近い見た目） */
 #screen-tutorial .tut-demo { position: relative; margin: 16px auto; width: 200px; height: 160px; }
+/* 200px 幅の .tut-demo 内で 168px リングを水平中央: (200-168)/2 = 16px */
 #screen-tutorial .tut-demo-joystick .tut-run-ring {
-  position: absolute; left: 8px; bottom: 8px; width: 168px; height: 168px; border-radius: 50%;
+  position: absolute; left: 16px; bottom: 8px; width: 168px; height: 168px; border-radius: 50%;
   border: 10px solid rgba(0,0,0,.14); box-sizing: border-box;
 }
 #screen-tutorial .tut-demo-joystick .tut-joy-base {
-  position: absolute; left: 36px; bottom: 36px; width: 112px; height: 112px; border-radius: 50%;
+  position: absolute; left: 44px; bottom: 36px; width: 112px; height: 112px; border-radius: 50%;
   background: rgba(255,255,255,.06); border: 3px solid rgba(255,255,255,.12);
 }
 #screen-tutorial .tut-demo-joystick .tut-joy-thumb {
-  position: absolute; left: 74px; bottom: 74px; width: 36px; height: 36px; border-radius: 50%;
+  position: absolute; left: 82px; bottom: 74px; width: 36px; height: 36px; border-radius: 50%;
   background: rgba(255,255,255,.14); border: 2px solid rgba(255,255,255,.2);
   transform: translate(18px, -10px);
 }
@@ -580,63 +574,68 @@ body { position: relative; }
   color: #e6edf3;
 }
 
-/* --- Game HUD overlay (transparent, only shows timer + hints) --- */
+/* --- Game HUD overlay (transparent, timer + theme + Agent 弾幕) --- */
 #screen-game-hud {
   background: transparent; justify-content: flex-start; pointer-events: none; z-index: 25;
 }
 #game-timer {
-  margin-top: 60px; font-size: 48px; font-weight: 800; color: #fff;
+  margin-top: 52px; font-size: 40px; font-weight: 800; color: #fff;
   text-shadow: 0 2px 8px rgba(0,0,0,.7);
 }
+#game-hud-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  width: 100%;
+  max-width: min(96vw, 400px);
+}
 #game-role-badge {
-  margin-top: 8px; padding: 6px 20px; border-radius: 20px; font-size: 15px; font-weight: 700;
-  display: flex; align-items: center; gap: 6px; justify-content: center;
+  margin-top: 0; padding: 5px 16px; border-radius: 18px; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; gap: 5px; justify-content: center;
 }
 #game-role-badge svg { flex-shrink: 0; }
 .role-citizen { background: #58d68d; color: #0d1117; }
 .role-enemy { background: #f85149; color: #fff; }
-#hint-popup {
-  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  max-width: min(92vw, 360px);
-  opacity: 0;
-  transition: opacity .35s ease, transform .35s ease;
-  pointer-events: none;
-  z-index: 50;
+.role-theme {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: #fff;
+  padding: 8px 14px;
+  line-height: 1.35;
+  text-align: center;
+  font-size: 13px;
+  max-width: min(90vw, 300px);
 }
-#hint-popup.visible {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1);
+/* テーマ直下：Agent ヒントを弾幕風に複数行スタック */
+.agent-hint-danmaku {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  min-height: 0;
 }
-#hint-popup:not(.visible) {
-  transform: translate(-50%, -48%) scale(0.96);
-}
-.hint-popup-card {
-  border-radius: 20px;
-  padding: 0;
+.agent-danmaku-row {
+  height: 22px;
   overflow: hidden;
-  background: linear-gradient(145deg, rgba(30, 38, 52, 0.98), rgba(18, 22, 30, 0.98));
-  border: 1px solid rgba(240, 192, 64, 0.45);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
-    0 16px 48px rgba(0, 0, 0, 0.55),
-    0 0 32px rgba(240, 192, 64, 0.12);
+  position: relative;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
 }
-.hint-popup-badge {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 10px 16px;
-  font-size: 13px; font-weight: 800; letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #0d1117;
-  background: linear-gradient(90deg, #f0c040, #ffd166);
-}
-.hint-popup-badge span { font-size: 16px; }
-#hint-popup-body {
-  padding: 18px 20px 20px;
-  font-size: 16px;
-  line-height: 1.65;
-  color: #e6edf3;
-  font-weight: 500;
-  text-align: left;
+.agent-danmaku-text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  color: #f6f8fa;
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 12px rgba(240, 192, 64, 0.35);
 }
 
 /* --- Voting screen --- */
@@ -703,7 +702,16 @@ body { position: relative; }
 #screen-results .result-title svg { flex-shrink: 0; }
 .result-win { color: #58d68d; }
 .result-lose { color: #f85149; }
-#screen-results .result-enemy { font-size: 16px; color: #c9d1d9; margin-top: 8px; }
+#screen-results .result-enemy-block {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  margin-top: 6px;
+}
+#screen-results .result-enemy-preview-mount {
+  width: 148px; height: 148px; border-radius: 14px;
+  border: 3px solid rgba(248, 81, 73, 0.5);
+  box-shadow: 0 0 28px rgba(248, 81, 73, 0.2);
+}
+#screen-results .result-enemy { font-size: 16px; color: #c9d1d9; margin-top: 0; }
 #screen-results .result-detail { font-size: 14px; color: #8b949e; margin-top: 12px; line-height: 1.6; }
 #btn-back-home {
   margin-top: 20px; padding: 14px 48px; border: none; border-radius: 12px;
@@ -736,29 +744,20 @@ body { position: relative; }
   overflow: visible !important;
 }
 /* ─── Player name labels ─── */
+/* 枠色は JS（applyPlayerLabelAccent）でプレイヤー色を指定。既定フォールバックのみ */
 .player-name-label {
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   text-align: center;
-  padding: 2px 8px;
+  padding: 2px 6px;
   background: rgba(0,0,0,0.65);
   border-radius: 6px;
+  border: 2px solid #fb8c00;
   white-space: nowrap;
   pointer-events: none;
   text-shadow: 0 1px 3px rgba(0,0,0,0.8);
   line-height: 1.3;
   letter-spacing: 0.02em;
+  box-sizing: border-box;
 }
-
-/* ─── Compass ─── */
-#compass {
-  position: fixed;
-  top: max(12px, env(safe-area-inset-top, 0px));
-  right: max(12px, env(safe-area-inset-right, 0px));
-  width: 52px; height: 52px;
-  pointer-events: none;
-  z-index: 60;
-}
-#compass svg { width: 100%; height: 100%; }
-#compass .compass-needle { transition: transform 0.15s ease-out; transform-origin: 50% 50%; }

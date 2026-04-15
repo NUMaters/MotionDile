@@ -36,6 +36,7 @@ func main() {
 
 	v1 := r.Group("/api/v1")
 	{
+		v1.POST("/rooms/resolve", roomHandler.ResolveLobby)
 		v1.POST("/rooms/:roomID/players", roomHandler.Join)
 		v1.GET("/rooms/:roomID/snapshot", roomHandler.Snapshot)
 		v1.DELETE("/rooms/:roomID/players/:playerID", roomHandler.Leave)

@@ -5,10 +5,11 @@
 ## アーキテクチャ
 
 ```
-agent/
+Agent/
 ├── cmd/server/main.go              # エントリポイント
 ├── internal/
 │   ├── config/config.go            # .env 読み込み・設定管理
+│   ├── contract/                   # リクエストバリデーション
 │   ├── domain/types.go             # リクエスト/レスポンスの型定義
 │   ├── infrastructure/openai/      # OpenAI API クライアント（インフラ層）
 │   │   └── client.go
@@ -66,13 +67,13 @@ Agent Server → { "text": "通報: 北エリアで不審な走行を確認…" 
 ## セットアップ
 
 ```bash
-cd agent
+cd Agent
 
 # .env に OpenAI API キーを設定
 echo "OPENAI_API_KEY=sk-your-key-here" > .env
 
 # 起動
-go run ./cmd/server/main.go
+go run ./cmd/server
 ```
 
 ## API

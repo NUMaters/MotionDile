@@ -4,7 +4,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { tintModel, setLocomotionWeights } from './character';
 import { renderer as mainRenderer } from './scene';
-import { WANI_SCALE } from './config';
+import { WANI_SCALE, FALLBACK_PLAYER_COLOR } from './config';
 
 const tmpV = new THREE.Vector3();
 const tmpSphere = new THREE.Sphere();
@@ -86,7 +86,7 @@ export function mountVotePreviews(
   try {
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i];
-      const color = colors[i] || '#58a6ff';
+      const color = colors[i] || FALLBACK_PLAYER_COLOR;
       mount.replaceChildren();
 
       const previewScene = new THREE.Scene();
@@ -210,7 +210,7 @@ export function mountVotePreviews(
 }
 
 export function disposeVotePreviews(): void {
-  for (const el of document.querySelectorAll('.vote-preview-mount')) {
+  for (const el of document.querySelectorAll('.vote-preview-mount, .result-enemy-preview-mount')) {
     el.replaceChildren();
   }
 }

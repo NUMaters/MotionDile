@@ -27,6 +27,8 @@ type HintRequest struct {
 	GameDuration int            `json:"gameDuration"`
 	ElapsedSec   int            `json:"elapsedSec"`
 	MapRadius    float64        `json:"mapRadius"`
+	AllyTheme    string         `json:"allyTheme,omitempty"`
+	EnemyTheme   string         `json:"enemyTheme,omitempty"`
 	Players      []PlayerInfo   `json:"players"`
 	Landmarks    []LandmarkInfo `json:"landmarks,omitempty"`
 }

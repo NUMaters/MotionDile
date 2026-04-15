@@ -20,7 +20,6 @@ import {
   LOOK_RESET_LEFT_INSET_PX,
 } from './config';
 import { getEl, clamp, smoothToward } from './utils';
-import { refreshHud } from './hud';
 import { renderer, scene, camera, sun, ground, grid, box, clock } from './scene';
 import { initInput, getInputVector, joystick, keys, manualMouthOpen, consumeAttack, consumeJump } from './input';
 import {
@@ -36,11 +35,11 @@ import {
 } from './world';
 import {
   normalizeCharacterRoot, setupActions, setLocomotionWeights,
-  tintModel, loadBinaryWithXHR, gltfBasePath,
+  loadBinaryWithXHR, gltfBasePath,
 } from './character';
 import {
   initMultiplayer, sendLocalMove, updateRemotePlayers, cleanup as cleanupNetwork,
-  setLocalModel, setRemoteModelTemplate, localPlayerColor, isLocalModelTinted,
+  setLocalModel, setRemoteModelTemplate, localPlayerColor,
   setOnGameEnd, clearRemotePlayers,
 } from './network';
 import {
@@ -93,7 +92,6 @@ let smoothHeadLeadY = 0;
 
 // ─── Init input ───
 initInput();
-refreshHud();
 
 const gameCanvas = document.getElementById('game-canvas')!;
 initLabelRenderer(gameCanvas.parentElement!);
@@ -357,22 +355,6 @@ function updateCharacter(dt: number) {
   model.rotation.z = idleRollOffset + smoothJumpRootRoll;
 }
 
-// ─── Compass ───
-const compassEl = document.getElementById('compass');
-const compassNeedle = compassEl?.querySelector('.compass-needle') as SVGGElement | null;
-
-function updateCompass() {
-  if (!model || !compassEl) return;
-  const screen = (window as unknown as { __currentScreen?: string }).__currentScreen;
-  if (screen === 'game-hud') {
-    compassEl.classList.remove('hidden');
-    const deg = -(model.rotation.y * 180 / Math.PI);
-    if (compassNeedle) compassNeedle.style.transform = `rotate(${deg}deg)`;
-  } else {
-    compassEl.classList.add('hidden');
-  }
-}
-
 // ─── Camera ───
 const vCamOff = new THREE.Vector3();
 const vLookOff = new THREE.Vector3();
@@ -477,9 +459,6 @@ async function applyLoadedGltf(gltf: GLTF) {
   setRemoteModelTemplate(template, gltf.animations);
 
   console.log(`[applyLoadedGltf] localPlayerColor=${localPlayerColor}`);
-  if (localPlayerColor && !isLocalModelTinted()) {
-    tintModel(model, localPlayerColor);
-  }
   setLocalModel(model);
 
   const mixerRef = { mixer: null as THREE.AnimationMixer | null };
@@ -617,8 +596,6 @@ initMatchmakingPip();
 // Lucide アイコンを動的に挿入（HTML上の placeholder span）
 const matchIcon = document.getElementById('match-icon');
 if (matchIcon) matchIcon.innerHTML = IC.users(48);
-const hintIcon = document.getElementById('hint-icon');
-if (hintIcon) hintIcon.innerHTML = IC.radio(16);
 const votingIcon = document.getElementById('voting-icon');
 if (votingIcon) votingIcon.innerHTML = IC.vote(24);
 
@@ -700,7 +677,6 @@ function loop(timestamp: number) {
 
   updateRemotePlayers(dt);
   updateCamera();
-  updateCompass();
   renderer.render(scene, camera);
   renderLabels(scene, camera);
 }

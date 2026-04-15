@@ -78,11 +78,23 @@ export function setLocomotionWeights(
   }
 }
 
+/** 口内ピンクに限りスキップ（肌・茶・緑肌で r>g になりやすい誤判定を避ける） */
 function isLikelyOralInterior(mat: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial): boolean {
   const c = mat.color;
-  if (c.r > c.g + 0.04) return true;
-  if (c.r > 0.35 && c.g < 0.28 && c.b < 0.35) return true;
-  return false;
+  return c.r > 0.52 && c.g < 0.4 && c.b < 0.46 && c.r - c.g > 0.12;
+}
+
+function applyTintToLambertLike(
+  src: THREE.MeshLambertMaterial | THREE.MeshPhongMaterial,
+  tint: THREE.Color,
+): THREE.MeshLambertMaterial | THREE.MeshPhongMaterial {
+  const clone = src.clone();
+  clone.color.copy(src.color).lerp(tint, BODY_TINT_SOLID_BLEND);
+  clone.emissive.copy(tint).multiplyScalar(BODY_EMISSIVE_MUL);
+  if ('emissiveIntensity' in clone && typeof (clone as { emissiveIntensity?: number }).emissiveIntensity === 'number') {
+    (clone as THREE.MeshStandardMaterial).emissiveIntensity = BODY_EMISSIVE_INTENSITY;
+  }
+  return clone;
 }
 
 function applyTintToMaterial(
@@ -113,8 +125,16 @@ export function tintModel(root: THREE.Object3D, hexColor: string): void {
     for (let i = 0; i < mats.length; i++) {
       const raw = mats[i];
       if (!raw || typeof raw !== 'object' || !('isMaterial' in raw)) continue;
-      const src = raw as THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
-      if (!src.isMeshStandardMaterial) continue;
+      const mat = raw as THREE.Material;
+      if (mat.isMeshLambertMaterial || mat.isMeshPhongMaterial) {
+        if (TINT_SKIP_NAME.test(mat.name)) continue;
+        const clone = applyTintToLambertLike(mat as THREE.MeshLambertMaterial | THREE.MeshPhongMaterial, tint);
+        if (Array.isArray(mesh.material)) mesh.material[i] = clone;
+        else mesh.material = clone;
+        continue;
+      }
+      if (!mat.isMeshStandardMaterial) continue;
+      const src = mat as THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
       if (TINT_SKIP_NAME.test(src.name)) continue;
       if (isLikelyOralInterior(src)) continue;
       const clone = applyTintToMaterial(src, tint, white);

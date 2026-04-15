@@ -2,9 +2,16 @@ package ws
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"log"
+	"math/rand"
 	"net/http"
+	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,8 +31,8 @@ const (
 	minPlayersToCountdown = 3
 	maxPlayersToStart     = 10
 	countdownDuration     = 20 * time.Second
-	gameDuration          = 30 * time.Second
-	hintInterval          = 10 * time.Second
+	gameDuration          = 60 * time.Second
+	hintInterval          = 15 * time.Second
 	voteDuration          = 20 * time.Second
 	resultDuration        = 10 * time.Second
 )
@@ -103,14 +110,33 @@ func NewGateway(uc *usecase.RoomUsecase) *Gateway {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(_ *http.Request) bool {
-				return true
-			},
+			CheckOrigin:     buildCheckOrigin(),
 		},
 		usecase:   uc,
 		rooms:     make(map[string]map[*Client]struct{}),
 		gameCtxs:  make(map[string]*roomGameCtx),
 		landmarks: make(map[string][]usecase.LandmarkInfo),
+	}
+}
+
+// buildCheckOrigin は WS_ALLOWED_ORIGINS 環境変数でオリジン制限を構築する。
+// 未設定・空・"*" の場合は全許可（開発用）。カンマ区切りで複数指定可。
+func buildCheckOrigin() func(r *http.Request) bool {
+	raw := strings.TrimSpace(os.Getenv("WS_ALLOWED_ORIGINS"))
+	if raw == "" || raw == "*" {
+		return func(_ *http.Request) bool { return true }
+	}
+	allowed := make(map[string]struct{})
+	for _, o := range strings.Split(raw, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowed[o] = struct{}{}
+		}
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		_, ok := allowed[origin]
+		return ok
 	}
 }
 
@@ -129,7 +155,13 @@ func (g *Gateway) Handle(c *gin.Context) {
 		DisplayName: displayName,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "message": err.Error()})
+		code := http.StatusBadRequest
+		errCode := "INVALID_INPUT"
+		if errors.Is(err, usecase.ErrGameInProgress) {
+			code = http.StatusConflict
+			errCode = "GAME_IN_PROGRESS"
+		}
+		c.JSON(code, gin.H{"ok": false, "code": errCode, "message": err.Error()})
 		return
 	}
 
@@ -224,7 +256,20 @@ func (g *Gateway) handleVote(client *Client, raw json.RawMessage) {
 		return
 	}
 
-	gs, err := g.usecase.CastVote(context.Background(), client.roomID, client.playerID, vp.VotedFor)
+	gs, err := g.usecase.GetGameState(context.Background(), client.roomID)
+	if err != nil || gs.Phase != entity.PhaseVoting {
+		return
+	}
+	if len(gs.RoundPlayerIDs) > 0 {
+		if !playerIDInList(client.playerID, gs.RoundPlayerIDs) {
+			return
+		}
+		if !playerIDInList(vp.VotedFor, gs.RoundPlayerIDs) {
+			return
+		}
+	}
+
+	gs, err = g.usecase.CastVote(context.Background(), client.roomID, client.playerID, vp.VotedFor)
 	if err != nil {
 		return
 	}
@@ -234,8 +279,8 @@ func (g *Gateway) handleVote(client *Client, raw json.RawMessage) {
 		Payload: gs,
 	})
 
-	playerIDs, _ := g.usecase.GetPlayerIDs(context.Background(), client.roomID)
-	if len(gs.Votes) >= len(playerIDs) {
+	quorum := g.voteQuorumTarget(gs, client.roomID)
+	if quorum > 0 && len(gs.Votes) >= quorum {
 		go g.finishVoting(client.roomID)
 	}
 }
@@ -298,15 +343,23 @@ func (g *Gateway) register(client *Client) {
 
 func (g *Gateway) unregister(client *Client) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	roomClients, ok := g.rooms[client.roomID]
 	if !ok {
+		g.mu.Unlock()
 		return
 	}
 	delete(roomClients, client)
 	close(client.send)
-	if len(roomClients) == 0 {
+	empty := len(roomClients) == 0
+	if empty {
 		delete(g.rooms, client.roomID)
+	}
+	g.mu.Unlock()
+
+	if empty {
+		g.landmarksMu.Lock()
+		delete(g.landmarks, client.roomID)
+		g.landmarksMu.Unlock()
 	}
 }
 
@@ -318,8 +371,13 @@ func (g *Gateway) roomClientCount(roomID string) int {
 
 func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[string]interface{} {
 	snapshot, _ := g.usecase.Snapshot(context.Background(), roomID)
+	roundSet := roundPlayerIDSet(gs.RoundPlayerIDs)
+	filterRound := len(gs.RoundPlayerIDs) > 0 && (gs.Phase == entity.PhasePlaying || gs.Phase == entity.PhaseVoting)
 	playerList := make([]map[string]string, 0, len(snapshot.Players))
 	for _, p := range snapshot.Players {
+		if filterRound && !roundSet[p.PlayerID] {
+			continue
+		}
 		dn := p.DisplayName
 		if dn == "" {
 			dn = "プレイヤー"
@@ -426,27 +484,51 @@ func (g *Gateway) startCountdown(roomID string) {
 }
 
 func (g *Gateway) startGame(roomID string) {
-	enemyID, err := g.usecase.PickEnemy(context.Background(), roomID)
-	if err != nil || enemyID == "" {
+	g.mu.RLock()
+	clients := g.rooms[roomID]
+	roundIDs := make(map[string]struct{}, len(clients))
+	for c := range clients {
+		roundIDs[c.playerID] = struct{}{}
+	}
+	g.mu.RUnlock()
+
+	roundPlayerIDs := make([]string, 0, len(roundIDs))
+	for id := range roundIDs {
+		roundPlayerIDs = append(roundPlayerIDs, id)
+	}
+	if len(roundPlayerIDs) == 0 {
 		return
 	}
+	sort.Strings(roundPlayerIDs)
+	idx, ok := uniformCryptoIndex(len(roundPlayerIDs))
+	if !ok {
+		idx = rand.Intn(len(roundPlayerIDs))
+	}
+	enemyID := roundPlayerIDs[idx]
+
+	allyTheme, enemyTheme := usecase.PickThemes()
 
 	now := time.Now()
 	gs := entity.GameState{
-		Phase:         entity.PhasePlaying,
-		EnemyPlayerID: enemyID,
-		GameEnd:       now.Add(gameDuration).UnixMilli(),
-		PlayerCount:   g.roomClientCount(roomID),
-		Votes:         make(map[string]string),
+		Phase:          entity.PhasePlaying,
+		EnemyPlayerID:  enemyID,
+		RoundPlayerIDs: roundPlayerIDs,
+		AllyTheme:      allyTheme,
+		EnemyTheme:     enemyTheme,
+		GameEnd:        now.Add(gameDuration).UnixMilli(),
+		PlayerCount:    g.roomClientCount(roomID),
+		Votes:          make(map[string]string),
 	}
 	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
 
 	g.mu.RLock()
-	clients := g.rooms[roomID]
+	clients = g.rooms[roomID]
 	for client := range clients {
 		role := "citizen"
+		theme := allyTheme
 		if client.playerID == enemyID {
 			role = "enemy"
+			theme = enemyTheme
 		}
 		payload := map[string]interface{}{
 			"phase":         gs.Phase,
@@ -454,6 +536,7 @@ func (g *Gateway) startGame(roomID string) {
 			"playerCount":   gs.PlayerCount,
 			"role":          role,
 			"enemyPlayerId": "",
+			"theme":         theme,
 		}
 		g.sendToClientRaw(client, genericEnvelope{Type: "game_start", Payload: payload})
 	}
@@ -483,7 +566,7 @@ func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
 			if err != nil {
 				log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
 			} else {
-				log.Printf("[ws] broadcasting hint #%d to room %s: %s", hintNum, roomID, hint.Text)
+				log.Printf("[ws] broadcasting hint #%d to room %s (len=%d)", hintNum, roomID, len(hint.Text))
 				g.broadcastToRoom(roomID, genericEnvelope{Type: "hint", Payload: hint})
 			}
 		case <-gameTimer.C:
@@ -507,8 +590,12 @@ func (g *Gateway) startVoting(roomID string) {
 	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
 
 	snapshot, _ := g.usecase.Snapshot(context.Background(), roomID)
+	roundSet := roundPlayerIDSet(gs.RoundPlayerIDs)
 	players := make([]map[string]string, 0, len(snapshot.Players))
 	for _, p := range snapshot.Players {
+		if len(gs.RoundPlayerIDs) > 0 && !roundSet[p.PlayerID] {
+			continue
+		}
 		dn := p.DisplayName
 		if dn == "" {
 			dn = "プレイヤー"
@@ -632,4 +719,43 @@ func (g *Gateway) sendToClientRaw(client *Client, envelope genericEnvelope) {
 	case client.send <- data:
 	default:
 	}
+}
+
+// uniformCryptoIndex は [0, n) の一様な整数を crypto/rand で返す。失敗時は ok=false。
+func uniformCryptoIndex(n int) (idx int, ok bool) {
+	if n <= 0 {
+		return 0, false
+	}
+	var b [8]byte
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		return 0, false
+	}
+	u := binary.LittleEndian.Uint64(b[:])
+	return int(u % uint64(n)), true
+}
+
+func roundPlayerIDSet(ids []string) map[string]bool {
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
+
+func playerIDInList(id string, list []string) bool {
+	for _, x := range list {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+// voteQuorumTarget は投票成立に必要な票数（ラウンド参加者数。RoundPlayerIds 未設定時は従来どおり REST 上の全員）
+func (g *Gateway) voteQuorumTarget(gs entity.GameState, roomID string) int {
+	if len(gs.RoundPlayerIDs) > 0 {
+		return len(gs.RoundPlayerIDs)
+	}
+	ids, _ := g.usecase.GetPlayerIDs(context.Background(), roomID)
+	return len(ids)
 }
