@@ -1,4 +1,4 @@
-# WaniAR Agent Server
+# Motion Dile Agent Server
 
 ゲームサーバーからプレイヤー情報を受け取り、OpenAI API を使って「敵ワニ」のヒントを生成する独立マイクロサービス。
 

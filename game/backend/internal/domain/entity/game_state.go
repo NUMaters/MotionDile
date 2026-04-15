@@ -33,6 +33,8 @@ type HintInfo struct {
 type VoteResult struct {
 	EnemyPlayerID string            `json:"enemyPlayerId"`
 	EnemyColor    string            `json:"enemyColor,omitempty"`
+	AllyTheme     string            `json:"allyTheme,omitempty"`
+	EnemyTheme    string            `json:"enemyTheme,omitempty"`
 	Votes         map[string]string `json:"votes"`
 	VoteCounts    map[string]int    `json:"voteCounts"`
 	CitizensWin   bool              `json:"citizensWin"`

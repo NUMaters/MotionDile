@@ -44,6 +44,10 @@ func (h *RoomHandler) Join(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"ok": false, "code": "GAME_IN_PROGRESS", "message": err.Error()})
 			return
 		}
+		if errors.Is(err, usecase.ErrRoomFull) {
+			c.JSON(http.StatusConflict, gin.H{"ok": false, "code": "ROOM_FULL", "message": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
 		return
 	}

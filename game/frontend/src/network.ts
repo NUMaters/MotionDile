@@ -3,6 +3,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import type { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { NetPlayerState, RoomSnapshot, RemotePlayer, MovePayload, WsMessage } from './types';
 import { GAME_API_BASE, GAME_WS_BASE, roomIdFromUrl, CLIP_NAMES, MOVE_SEND_INTERVAL } from './config';
+import { applyServerGameRules, getGameRules, type GameRulesState } from './game-rules';
 import { smoothToward } from './utils';
 import { scene } from './scene';
 import { tintModel, setLocomotionWeights } from './character';
@@ -511,6 +512,7 @@ function sendVote(votedFor: string): void {
 let currentRole = 'citizen';
 
 function handleGameState(payload: Record<string, unknown>): void {
+  applyServerGameRules(payload.rules as Partial<GameRulesState> | undefined);
   const phase = payload.phase as string || 'waiting';
   const playerCount = (payload.playerCount as number) || 0;
   const countdownEnd = (payload.countdownEnd as number) || 0;
@@ -529,7 +531,8 @@ function handleGameState(payload: Record<string, unknown>): void {
 }
 
 function handleGameStart(payload: Record<string, unknown>): void {
-  const gameEnd = (payload.gameEnd as number) || Date.now() + 60000;
+  const fallbackMs = getGameRules().gameDurationSec * 1000;
+  const gameEnd = (payload.gameEnd as number) || Date.now() + fallbackMs;
   const role = (payload.role as string) || 'citizen';
   const theme = (payload.theme as string) || undefined;
   currentRole = role;
@@ -542,7 +545,7 @@ function handleHint(payload: Record<string, unknown>): void {
 }
 
 function handleVoteStart(payload: Record<string, unknown>): void {
-  const voteEnd = (payload.voteEnd as number) || Date.now() + 20000;
+  const voteEnd = (payload.voteEnd as number) || Date.now() + getGameRules().voteDurationSec * 1000;
   const players = (payload.players as { playerId: string; color: string; displayName?: string }[]) || [];
   for (const pl of players) {
     if (pl.displayName) setPlayerDisplayName(pl.playerId, pl.displayName);
@@ -556,7 +559,18 @@ function handleVoteResult(payload: Record<string, unknown>): void {
   const citizensWin = (payload.citizensWin as boolean) || false;
   const voteCounts = (payload.voteCounts as Record<string, number>) || {};
   const enemyColor = (payload.enemyColor as string) || '';
-  showResults(citizensWin, enemyPlayerId, voteCounts, currentRole, enemyColor, getVotePreviewModel());
+  const allyTheme = (payload.allyTheme as string) || '';
+  const enemyTheme = (payload.enemyTheme as string) || '';
+  showResults(
+    citizensWin,
+    enemyPlayerId,
+    voteCounts,
+    currentRole,
+    enemyColor,
+    getVotePreviewModel(),
+    allyTheme,
+    enemyTheme,
+  );
   cleanup();
   if (onGameEndCallback) onGameEndCallback();
 }

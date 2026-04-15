@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"waniar/game-backend/internal/config"
 	"waniar/game-backend/internal/domain/entity"
 	"waniar/game-backend/internal/domain/repository"
 )
@@ -22,6 +23,9 @@ var ErrInvalidInput = errors.New("invalid input")
 
 // ErrGameInProgress は対戦・投票・結果表示中に、まだその部屋にいないプレイヤーが Join しようとしたとき
 var ErrGameInProgress = errors.New("game in progress")
+
+// ErrRoomFull はロビーで定員に達しており、新規参加できないとき
+var ErrRoomFull = errors.New("room is full")
 
 func isLobbyPhase(ph entity.GamePhase) bool {
 	return ph == "" || ph == entity.PhaseWaiting || ph == entity.PhaseCountdown
@@ -49,30 +53,19 @@ type MoveInput struct {
 	IdleRoll      float64 `json:"idleRoll"`
 }
 
-// GameRules はゲームの共通パラメータ。gateway 定数と一致させること。
-type GameRules struct {
-	GameDurationSec int
-	MapRadius       float64
-}
-
-var DefaultGameRules = GameRules{
-	GameDurationSec: 60,
-	MapRadius:       1.3,
-}
-
 type RoomUsecase struct {
 	repo     repository.RoomRepository
 	agentURL string
 	hc       *http.Client
-	rules    GameRules
+	rules    config.Rules
 }
 
-func NewRoomUsecase(repo repository.RoomRepository, agentURL string) *RoomUsecase {
+func NewRoomUsecase(repo repository.RoomRepository, agentURL string, rules config.Rules) *RoomUsecase {
 	return &RoomUsecase{
 		repo:     repo,
 		agentURL: agentURL,
 		hc:       &http.Client{Timeout: 6 * time.Second},
-		rules:    DefaultGameRules,
+		rules:    rules,
 	}
 }
 
@@ -97,6 +90,9 @@ func (u *RoomUsecase) Join(ctx context.Context, in JoinInput) (entity.RoomSnapsh
 	}
 	if !isLobbyPhase(gs.Phase) && !isReturning {
 		return entity.RoomSnapshot{}, ErrGameInProgress
+	}
+	if !isReturning && len(existingSnap.Players) >= u.rules.MaxPlayers {
+		return entity.RoomSnapshot{}, ErrRoomFull
 	}
 	name := strings.TrimSpace(in.DisplayName)
 	if len([]rune(name)) > 16 {
@@ -320,14 +316,22 @@ func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum i
 		if remaining < 0 {
 			remaining = 0
 		}
-		elapsed := (time.Duration(u.rules.GameDurationSec) * time.Second) - remaining
+		elapsed := u.rules.GameDuration - remaining
+		if elapsed < 0 {
+			elapsed = 0
+		}
 		elapsedSec = int(elapsed.Seconds())
+	}
+
+	gameDurSec := int(u.rules.GameDuration / time.Second)
+	if gameDurSec < 1 {
+		gameDurSec = 1
 	}
 
 	reqBody := agentHintRequest{
 		RoomID:       roomID,
 		HintNumber:   hintNum,
-		GameDuration: u.rules.GameDurationSec,
+		GameDuration: gameDurSec,
 		ElapsedSec:   elapsedSec,
 		MapRadius:    u.rules.MapRadius,
 		AllyTheme:    gs.AllyTheme,
@@ -471,6 +475,8 @@ func (u *RoomUsecase) TallyVotes(ctx context.Context, roomID string) (entity.Vot
 	return entity.VoteResult{
 		EnemyPlayerID: gs.EnemyPlayerID,
 		EnemyColor:    enemyColor,
+		AllyTheme:     gs.AllyTheme,
+		EnemyTheme:    gs.EnemyTheme,
 		Votes:         gs.Votes,
 		VoteCounts:    counts,
 		CitizensWin:   accused == gs.EnemyPlayerID,
