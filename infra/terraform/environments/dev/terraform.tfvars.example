@@ -3,9 +3,11 @@
 aws_region  = "ap-northeast-1"
 project_name = "waniar"
 
-# 初回 apply 前は仮の ECR タグでも可（apply 後に push して再デプロイ）
-game_backend_image = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/waniar-game-backend:latest"
-agent_image        = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/waniar-agent:latest"
+# ⚠ ECR は IMMUTABLE タグ設定です。:latest は使えません。
+# git SHA やセマンティックバージョンを使用してください。
+# ダイジェスト例: "...@sha256:abc123..."
+game_backend_image = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/waniar-game-backend:v0.1.0"
+agent_image        = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/waniar-agent:v0.1.0"
 
 # Agent: Bedrock（既定は Claude 3 Haiku）。AWS コンソールでモデルアクセスを有効化すること
 # agent_bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"

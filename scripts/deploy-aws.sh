@@ -19,20 +19,27 @@ elif [[ -z "${TF_VAR_agent_openai_api_key:-}" ]] && [[ -f "$ROOT/Agent/.env" ]];
 fi
 
 echo "==> terraform apply ($TF_DIR)"
+# wait_for_steady_state=true により ECS が安定するまで待機してから次へ進む
 (cd "$TF_DIR" && terraform apply -auto-approve)
 
-echo "==> npm run build:aws"
-(cd "$ROOT" && npm run build:aws)
+# enable_static_frontend=false の場合、S3/CloudFront 出力は null になる
+BUCKET="$(cd "$TF_DIR" && terraform output -raw frontend_s3_bucket_id 2>/dev/null || echo "")"
 
-BUCKET="$(cd "$TF_DIR" && terraform output -raw frontend_s3_bucket_id)"
-DIST_ID="$(cd "$TF_DIR" && terraform output -raw frontend_cloudfront_distribution_id)"
+if [[ -n "$BUCKET" && "$BUCKET" != "null" ]]; then
+  echo "==> npm run build:aws"
+  (cd "$ROOT" && npm run build:aws)
 
-echo "==> aws s3 sync -> s3://${BUCKET}/"
-aws s3 sync "$ROOT/dist/" "s3://${BUCKET}/" --delete
+  DIST_ID="$(cd "$TF_DIR" && terraform output -raw frontend_cloudfront_distribution_id)"
 
-echo "==> CloudFront invalidation ${DIST_ID}"
-aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" --output text
+  echo "==> aws s3 sync -> s3://${BUCKET}/"
+  aws s3 sync "$ROOT/dist/" "s3://${BUCKET}/" --delete
 
-CF_URL="$(cd "$TF_DIR" && terraform output -raw frontend_cloudfront_url)"
-echo "==> フロント URL: ${CF_URL}"
-echo "==> ヘルス確認例: curl -sS '${CF_URL}/healthz'"
+  echo "==> CloudFront invalidation ${DIST_ID}"
+  aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" --output text
+
+  CF_URL="$(cd "$TF_DIR" && terraform output -raw frontend_cloudfront_url)"
+  echo "==> フロント URL: ${CF_URL}"
+  echo "==> ヘルス確認例: curl -sS '${CF_URL}/healthz'"
+else
+  echo "==> フロント配信は無効（enable_static_frontend=false）: S3/CloudFront 操作をスキップ"
+fi

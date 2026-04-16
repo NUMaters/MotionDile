@@ -27,6 +27,36 @@ resource "aws_cloudfront_origin_access_control" "site" {
   signing_protocol                  = "sigv4"
 }
 
+# SPA ルーティング用 CloudFront Function
+# 拡張子のないパスを /index.html にリライトする (viewer-request)。
+# default_cache_behavior（S3 向け）にのみ関連付けるため、
+# ALB 向けの ordered_cache_behavior には影響しない。
+resource "aws_cloudfront_function" "spa_rewrite" {
+  count   = var.spa_error_fallback ? 1 : 0
+  name    = "${var.name_prefix}-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "SPA: rewrite non-file paths to /index.html"
+  publish = true
+  code    = <<-JS
+    function handler(event) {
+      var request = event.request;
+      var uri = request.uri;
+      // ルートパスのみ素通し（default_root_object が効く）
+      // ※ /foo/ のようなサブパスは default_root_object の対象外で S3 が 403 を返すため素通し不可
+      if (uri === '/') {
+        return request;
+      }
+      // 拡張子のあるパス（.js, .css, .png など）はそのまま S3 から返す
+      if (uri.includes('.')) {
+        return request;
+      }
+      // それ以外（/game/room/123, /room/123/ など）は SPA ルーティングとして /index.html にリライト
+      request.uri = '/index.html';
+      return request;
+    }
+  JS
+}
+
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   is_ipv6_enabled     = true
@@ -98,16 +128,21 @@ resource "aws_cloudfront_distribution" "site" {
     default_ttl            = 3600
     max_ttl                = 86400
     compress               = true
-  }
 
-  dynamic "custom_error_response" {
-    for_each = var.spa_error_fallback ? [403, 404] : []
-    content {
-      error_code         = custom_error_response.value
-      response_code      = 200
-      response_page_path = "/index.html"
+    # SPA ルーティング: 拡張子のないパスを /index.html にリライト（S3 向けのみ）
+    dynamic "function_association" {
+      for_each = var.spa_error_fallback ? [1] : []
+      content {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.spa_rewrite[0].arn
+      }
     }
   }
+
+  # custom_error_response は削除済み。
+  # ディストリビューション全体に適用され ALB オリジンの 403/404 まで
+  # index.html にフォールバックしてしまうため、代わりに CloudFront Function
+  # (viewer-request) を default_cache_behavior にのみ関連付けて SPA リライトを実現。
 
   restrictions {
     geo_restriction {
