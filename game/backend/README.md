@@ -53,7 +53,7 @@ REST API は部屋/プレイヤー管理、WebSocket は部屋内の移動同期
 ```bash
 cd game/backend
 go mod tidy
-go run ./cmd/server
+air -c .air.toml
 ```
 
 デフォルトは `127.0.0.1:8090`。`GAME_BACKEND_ADDR` で変更できます。

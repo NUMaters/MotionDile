@@ -73,7 +73,7 @@ cd Agent
 echo "OPENAI_API_KEY=sk-your-key-here" > .env
 
 # 起動
-go run ./cmd/server
+air -c .air.toml
 ```
 
 ## API
@@ -142,5 +142,5 @@ go run ./cmd/server
 ゲームサーバー側で `AGENT_URL` 環境変数を設定:
 
 ```bash
-AGENT_URL=http://127.0.0.1:8091 go run ./cmd/server/main.go
+AGENT_URL=http://127.0.0.1:8091 air -c .air.toml
 ```
