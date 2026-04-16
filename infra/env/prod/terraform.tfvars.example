@@ -12,3 +12,10 @@ enable_cloudfront    = true
 node_desired_capacity = 1
 node_min_size         = 1
 node_max_size         = 1
+
+# EKS API access control (recommended for environment portability)
+enable_current_caller_cluster_admin = true
+eks_cluster_admin_principal_arns = [
+  # "arn:aws:iam::123456789012:role/your-ci-role",
+  # "arn:aws:iam::123456789012:user/your-admin-user",
+]

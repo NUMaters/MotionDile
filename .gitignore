@@ -15,3 +15,18 @@ medea-pipeline/data/hand-dataset.json
 **/.env.*
 !.env.example
 !**/.env.example
+
+# Local .terraform directory (contains provider plugins and modules)
+.terraform/
+
+# .tfstate files (can contain sensitive data like passwords)
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+
+# Terraform execution plans (can contain sensitive data)
+*.tfplan
+
+# Terraform local vars (sensitive)
+terraform.tfvars
+**/terraform.tfvars

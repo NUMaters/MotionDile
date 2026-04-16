@@ -21,6 +21,7 @@ module "eks" {
   node_min_size         = var.node_min_size
   node_max_size         = var.node_max_size
   node_disk_size        = var.node_disk_size
+  access_entries        = local.eks_access_entries
   tags                  = local.tags
 }
 

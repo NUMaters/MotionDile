@@ -10,6 +10,7 @@ module "eks" {
 
   enable_irsa = true
   cluster_endpoint_public_access = true
+  access_entries                 = var.access_entries
 
   eks_managed_node_groups = {
     default = {

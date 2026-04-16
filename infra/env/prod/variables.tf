@@ -72,6 +72,22 @@ variable "kubernetes_version" {
   default     = "1.29"
 }
 
+variable "enable_current_caller_cluster_admin" {
+  type        = bool
+  description = "Whether to grant current Terraform caller cluster-admin access via EKS Access Entry."
+  default     = true
+}
+
+variable "eks_cluster_admin_principal_arns" {
+  type        = list(string)
+  description = "Additional IAM principal ARNs to grant cluster-admin access via EKS Access Entries."
+  default     = []
+  validation {
+    condition     = var.enable_current_caller_cluster_admin || length(var.eks_cluster_admin_principal_arns) > 0
+    error_message = "Set at least one eks_cluster_admin_principal_arns entry when enable_current_caller_cluster_admin is false."
+  }
+}
+
 variable "node_instance_type" {
   type        = string
   description = "Instance type for EKS managed node group."

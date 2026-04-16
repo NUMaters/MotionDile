@@ -43,6 +43,12 @@ variable "node_disk_size" {
   description = "Node root volume size (GiB)."
 }
 
+variable "access_entries" {
+  type        = any
+  description = "EKS access entries to create for cluster authentication/authorization."
+  default     = {}
+}
+
 variable "tags" {
   type        = map(string)
   description = "Tags to apply."
