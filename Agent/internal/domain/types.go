@@ -37,3 +37,15 @@ type HintRequest struct {
 type HintResponse struct {
 	Text string `json:"text"`
 }
+
+// ThemeRequest はゲーム開始時のお題生成入力です。
+type ThemeRequest struct {
+	RoomID      string `json:"roomId"`
+	PlayerCount int    `json:"playerCount"`
+}
+
+// ThemeResponse は市民側と敵側のお題を返します。
+type ThemeResponse struct {
+	AllyTheme  string `json:"allyTheme"`
+	EnemyTheme string `json:"enemyTheme"`
+}

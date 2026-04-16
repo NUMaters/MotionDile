@@ -4,9 +4,11 @@ import (
 	"log"
 	"net/http"
 
+	"agent/internal/compose"
 	"agent/internal/config"
-	agenthttp "agent/internal/interface/http"
 	"agent/internal/infrastructure/openai"
+	agenthttp "agent/internal/interface/http"
+	"agent/internal/ops"
 	"agent/internal/usecase"
 )
 
@@ -17,11 +19,17 @@ func main() {
 	}
 
 	ai := openai.NewClient(cfg.OpenAIKey)
-	uc := usecase.NewHintUsecase(ai)
-	handler := agenthttp.NewHintHandler(uc)
+	llmComposer := compose.NewLLMComposer(ai)
+	templateComposer := compose.NewTemplateComposer()
+	historyStore := ops.NewMemoryHintHistoryStore()
+	hintUsecase := usecase.NewHintUsecase(llmComposer, templateComposer, historyStore)
+	themeUsecase := usecase.NewThemeUsecase(ai)
+	hintHandler := agenthttp.NewHintHandler(hintUsecase)
+	themeHandler := agenthttp.NewThemeHandler(themeUsecase)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/hint", handler.ServeHTTP)
+	mux.HandleFunc("/hint", hintHandler.ServeHTTP)
+	mux.HandleFunc("/themes", themeHandler.ServeHTTP)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

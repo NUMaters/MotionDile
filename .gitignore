@@ -1,5 +1,6 @@
 node_modules/
 dist/
+coverage/
 # CMake 外付けビルド（compile_commands.json もここに出る）
 build/
 .DS_Store
