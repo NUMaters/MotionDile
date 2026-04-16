@@ -35,10 +35,13 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 - 15秒付近のヒントはかなり曖昧に、30秒付近ではやや具体的に、45秒以降はかなり具体的にする
 - 口調は短く緊迫感のある日本語でよいが、出力はヒント本文だけとする
 - 禁止: 「監視AI通報」「通報:」などのラベル、絵文字、個人特定に繋がる記述
-- 毎回異なる表現を使い、同じパターンの繰り返しを避ける`
+- 毎回異なる表現を使い、同じパターンの繰り返しを避ける
+- 「影」「気配」「違和感」などの抽象語だけで済ませず、観測できる行動や位置をそのまま短く言う
+- 比喩やポエム調は避け、誰でも同じ意味に取れる明快な日本語にする`
 
 func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary) llm.PromptInput {
 	selected := material.SelectMaterials(ev, hintPolicy)
+	directives := buildCandidateDirectives(selected, hintPolicy)
 
 	if ev.Enemy == nil {
 		return llm.PromptInput{
@@ -57,6 +60,7 @@ func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, su
 	sb.WriteString(fmt.Sprintf("→ 今回使える signal 名: %s\n", strings.Join(selectedSignalNames(selected, hintPolicy), ", ")))
 	sb.WriteString(fmt.Sprintf("→ 手がかり数の上限: %d\n", hintPolicy.MaxClues))
 	sb.WriteString("→ 禁止: 名前、色、数値距離、個人特定につながる表現\n\n")
+	sb.WriteString("→ 書き方: 抽象語だけにせず、観測できる行動・位置・関係をそのまま短く言う\n\n")
 
 	if len(summary.RecentTexts) > 0 {
 		sb.WriteString("【直近ヒント履歴】\n")
@@ -86,14 +90,31 @@ func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, su
 		sb.WriteString("\n")
 	}
 
+	sb.WriteString("\n【良い例】\n")
+	sb.WriteString("- 口を開けたまま外周寄りで止まりがちだ\n")
+	sb.WriteString("- 壁際で誰かから少し離れて動いている\n")
+	sb.WriteString("- 中央付近で向きを変えずに静止しがちだ\n")
+	sb.WriteString("【悪い例】\n")
+	sb.WriteString("- 怪しい影がある\n")
+	sb.WriteString("- 不穏な気配が漂う\n")
+	sb.WriteString("- 違和感のある何かがいる\n")
+
+	sb.WriteString("\n【候補ごとの役割】\n")
+	for _, directive := range directives {
+		sb.WriteString("- ")
+		sb.WriteString(directive.Instruction)
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("\n【出力形式】\n")
 	sb.WriteString("JSONのみを返してください。Markdownのコードフェンスや説明文は不要です。\n")
 	sb.WriteString(fmt.Sprintf("candidates は %d 件にしてください。\n", hintPolicy.CandidateCount))
 	sb.WriteString("各 candidate は次の形です:\n")
 	sb.WriteString(`{"text":"ヒント本文","used_signals":["motion","zone"]}` + "\n")
 	sb.WriteString("text は 1〜2文、50文字以内、前置きなし、1行のみ。\n")
+	sb.WriteString("text には少なくとも1つ、できれば2つの具体的な手がかり（行動/位置/関係）を入れてください。\n")
 	sb.WriteString("used_signals は今回使える signal 名だけを 1 個以上入れ、手がかり数の上限を超えないでください。\n")
-	sb.WriteString("候補同士は表現や切り口を少し変えてください。\n")
+	sb.WriteString("候補同士は役割に従って主役の切り口を変えてください。3候補が同じ型にならないようにしてください。\n")
 	sb.WriteString("主軸に沿って組み立て、使ってよい情報だけを採用してください。")
 
 	return llm.PromptInput{

@@ -122,8 +122,8 @@ func TestBuildHintPolicy_Hint2AllowsJumpFacingAndLocationSupport(t *testing.T) {
 	if p.MaxClues != 3 {
 		t.Fatalf("expected max clues to be 3 for medium specificity, got %d", p.MaxClues)
 	}
-	if !p.RequireThemeMismatchHint {
-		t.Fatal("expected theme mismatch requirement to be enabled")
+	if p.RequireThemeMismatchHint {
+		t.Fatal("expected theme mismatch to stay optional on medium specificity")
 	}
 }
 
@@ -194,5 +194,38 @@ func TestBuildHintPolicy_AvoidsRepeatingLocationFocusWhenRecentHistoryMatches(t 
 	p := BuildHintPolicy(ev, ops.RecentHintSummary{RecentFocuses: []string{"location"}})
 	if p.PrimaryFocus != FocusMovement {
 		t.Fatalf("expected movement focus when recent history already used location, got %s", p.PrimaryFocus)
+	}
+}
+
+func TestBuildHintPolicy_SuppressesThemeMismatchWhenRecentlyUsed(t *testing.T) {
+	ev := evidence.BuildHintEvidence(domain.HintRequest{
+		RoomID:       "room-1",
+		HintNumber:   3,
+		GameDuration: 60,
+		ElapsedSec:   45,
+		MapRadius:    1.3,
+		AllyTheme:    "みんなで外を歩こう",
+		EnemyTheme:   "壁で止まり続けよう",
+		Players: []domain.PlayerInfo{
+			{
+				PlayerID:      "enemy",
+				X:             0.92,
+				Z:             0.65,
+				RotationY:     1.57,
+				Animation:     "Idle_MouthOpen_Jump",
+				MouthOpenness: 0.8,
+				IsEnemy:       true,
+			},
+			{PlayerID: "citizen-1", X: 0.65, Z: 0.62, Animation: "Idle"},
+		},
+	})
+
+	p := BuildHintPolicy(ev, ops.RecentHintSummary{RecentSignals: []string{"theme_mismatch"}})
+
+	if p.Signals.UseThemeMismatch {
+		t.Fatal("expected recent theme mismatch usage to suppress repeated use")
+	}
+	if p.RequireThemeMismatchHint {
+		t.Fatal("expected repeated theme mismatch requirement to stay disabled")
 	}
 }

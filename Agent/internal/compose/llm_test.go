@@ -104,12 +104,14 @@ func TestLLMComposer_BuildsPromptAndOmitsIdentifiers(t *testing.T) {
 		"今回使える signal 名",
 		"手がかり数の上限",
 		"JSONのみを返してください",
+		"良い例",
+		"悪い例",
+		"抽象語だけにせず",
 		"口の開き",
 		"ジャンプ",
 		"向き",
 		"行動ミッション（テーマ）",
 		"テーマとのズレ",
-		"市民側の流れと噛み合わない",
 		"直近ヒント履歴",
 	}
 	for _, fragment := range requiredFragments {
@@ -237,7 +239,7 @@ func TestLLMComposer_PrefersCandidateThatAvoidsRecentCut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose returned error: %v", err)
 	}
-	if text != "周囲と噛み合わない静けさがある" {
+	if text != "外周で不自然な静けさがある" {
 		t.Fatalf("expected less repetitive candidate to be selected, got %s", text)
 	}
 }
@@ -269,15 +271,15 @@ func TestLLMComposer_UsesJudgeDecisionWhenAvailable(t *testing.T) {
 	hintPolicy := policy.BuildHintPolicy(ev, ops.RecentHintSummary{})
 	hintPolicy.MaxClues = 4
 	client := &fakeLLMClient{outputs: []string{
-		`{"candidates":[{"text":"外周で不自然な静けさがある","used_signals":["motion","zone"]},{"text":"周囲と噛み合わない影がある","used_signals":["theme_mismatch","motion"]},{"text":"壁際で不自然に止まる気配","used_signals":["zone","near_wall"]}]}`,
-		`{"selected_index":0,"reason":"テーマ差分を短く示唆できている"}`,
+		`{"candidates":[{"text":"壁際で止まりがちだ","used_signals":["zone","near_wall"]},{"text":"口を開けたまま周囲と噛み合わず止まりがちだ","used_signals":["theme_mismatch","motion","mouth"]},{"text":"外周の北東寄りで静止気味だ","used_signals":["zone"]}]}`,
+		`{"selected_index":0,"reason":"テーマ差分を具体的に示しつつ短い"}`,
 	}}
 
 	text, err := NewLLMComposer(client).Compose(context.Background(), ev, hintPolicy, ops.RecentHintSummary{})
 	if err != nil {
 		t.Fatalf("compose returned error: %v", err)
 	}
-	if text != "周囲と噛み合わない影がある" {
+	if text != "壁際で止まりがちだ" {
 		t.Fatalf("expected judge-selected candidate, got %s", text)
 	}
 	if len(client.inputs) != 2 {
@@ -315,7 +317,7 @@ func TestLLMComposer_FallsBackToRuleBestWhenJudgeFails(t *testing.T) {
 	hintPolicy := policy.BuildHintPolicy(ev, ops.RecentHintSummary{})
 	hintPolicy.MaxClues = 4
 	client := &fakeLLMClient{outputs: []string{
-		`{"candidates":[{"text":"外周で不自然な静けさがある","used_signals":["motion","zone"]},{"text":"周囲と噛み合わない影がある","used_signals":["theme_mismatch","motion"]}]}`,
+		`{"candidates":[{"text":"壁際で止まりがちだ","used_signals":["zone","near_wall"]},{"text":"口を開けたまま周囲と噛み合わず止まりがちだ","used_signals":["theme_mismatch","motion","mouth"]}]}`,
 		`{"selected_index":99,"reason":"invalid"}`,
 	}}
 
@@ -323,7 +325,7 @@ func TestLLMComposer_FallsBackToRuleBestWhenJudgeFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose returned error: %v", err)
 	}
-	if text != "周囲と噛み合わない影がある" {
+	if text != "壁際で止まりがちだ" {
 		t.Fatalf("expected fallback to rule-based best, got %s", text)
 	}
 }

@@ -34,6 +34,7 @@ func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (dom
 	hintPolicy := policy.BuildHintPolicy(hintEvidence, summary)
 
 	if hintPolicy.Action == policy.ActionInformationPending {
+		log.Printf("[agent] using template fallback: information pending room=%s hint=%d", req.RoomID, req.HintNumber)
 		return domain.HintResponse{Text: u.composeTemplate(ctx, hintEvidence, hintPolicy, summary)}, nil
 	}
 
@@ -45,6 +46,7 @@ func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (dom
 
 	text = sanitize(text)
 	if text == "" {
+		log.Printf("[agent] using template fallback: llm output empty after sanitize room=%s hint=%d", req.RoomID, req.HintNumber)
 		return domain.HintResponse{Text: u.composeTemplate(ctx, hintEvidence, hintPolicy, summary)}, nil
 	}
 

@@ -111,7 +111,7 @@ func BuildHintPolicy(ev evidence.HintEvidence, summary ops.RecentHintSummary) Hi
 		p.Signals.UseNearWall = ev.Enemy.Environment.NearWall
 		p.Signals.UseFacing = shouldUseFacing(p.Specificity, ev)
 		p.Signals.UseRelation = shouldUseRelation(p.Specificity, ev)
-		p.Signals.UseThemeMismatch = shouldUseThemeMismatch(ev)
+		p.Signals.UseThemeMismatch = shouldUseThemeMismatch(p.Specificity, ev, summary)
 	}
 
 	switch p.Specificity {
@@ -127,7 +127,7 @@ func BuildHintPolicy(ev evidence.HintEvidence, summary ops.RecentHintSummary) Hi
 
 	p.AllowedSignals = buildAllowedSignals(p.Signals)
 	p.ForbiddenSignals = defaultForbiddenSignals()
-	p.RequireThemeMismatchHint = p.Signals.UseThemeMismatch
+	p.RequireThemeMismatchHint = shouldRequireThemeMismatchHint(p, summary)
 
 	return p
 }
@@ -161,8 +161,39 @@ func defaultForbiddenSignals() []SignalName {
 	}
 }
 
-func shouldUseThemeMismatch(ev evidence.HintEvidence) bool {
-	return ev.Request.AllyTheme != "" && ev.Request.EnemyTheme != ""
+func shouldUseThemeMismatch(specificity HintSpecificity, ev evidence.HintEvidence, summary ops.RecentHintSummary) bool {
+	if ev.Request.AllyTheme == "" || ev.Request.EnemyTheme == "" {
+		return false
+	}
+	if specificity == SpecificityLow {
+		return false
+	}
+	if hasRecentSignal(summary, string(SignalThemeMismatch)) {
+		return false
+	}
+	return true
+}
+
+func shouldRequireThemeMismatchHint(p HintPolicy, summary ops.RecentHintSummary) bool {
+	if !p.Signals.UseThemeMismatch {
+		return false
+	}
+	if p.Specificity != SpecificityHigh {
+		return false
+	}
+	if hasRecentSignal(summary, string(SignalThemeMismatch)) {
+		return false
+	}
+	return true
+}
+
+func hasRecentSignal(summary ops.RecentHintSummary, target string) bool {
+	for _, signal := range summary.RecentSignals {
+		if signal == target {
+			return true
+		}
+	}
+	return false
 }
 
 func specificityFromElapsedSec(elapsedSec int) HintSpecificity {

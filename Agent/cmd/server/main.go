@@ -22,11 +22,14 @@ func main() {
 	llmComposer := compose.NewLLMComposer(ai)
 	templateComposer := compose.NewTemplateComposer()
 	historyStore := ops.NewMemoryHintHistoryStore()
-	uc := usecase.NewHintUsecase(llmComposer, templateComposer, historyStore)
-	handler := agenthttp.NewHintHandler(uc)
+	hintUsecase := usecase.NewHintUsecase(llmComposer, templateComposer, historyStore)
+	themeUsecase := usecase.NewThemeUsecase(ai)
+	hintHandler := agenthttp.NewHintHandler(hintUsecase)
+	themeHandler := agenthttp.NewThemeHandler(themeUsecase)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/hint", handler.ServeHTTP)
+	mux.HandleFunc("/hint", hintHandler.ServeHTTP)
+	mux.HandleFunc("/themes", themeHandler.ServeHTTP)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

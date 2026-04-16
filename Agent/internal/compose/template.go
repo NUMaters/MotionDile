@@ -11,12 +11,12 @@ import (
 	"agent/internal/policy"
 )
 
-const informationPendingText = "情報収集中…しばらくお待ちください"
+const informationPendingText = "情報収集中…しばらく待ってください"
 
 var fallbackTemplates = []string{
-	"%s。警戒せよ",
-	"%s。注意されたし",
-	"%s。動きを見逃すな",
+	"%s。警戒して見てくれ",
+	"%s。そこを見てほしい",
+	"%s。動きをよく見てくれ",
 }
 
 type TemplateComposer struct{}
@@ -33,43 +33,32 @@ func (c *TemplateComposer) Compose(_ context.Context, ev evidence.HintEvidence, 
 	selected := material.SelectMaterials(ev, hintPolicy)
 	parts := orderedHintParts(ev, hintPolicy, selected)
 	if len(parts) == 0 {
-		return "不審な動きあり。警戒せよ", nil
+		return "不審な動きあり。警戒して見てくれ", nil
 	}
 
-	tpl := fallbackTemplates[ev.Request.HintNumber%len(fallbackTemplates)]
+	tpl := selectFallbackTemplate(ev.Request.HintNumber)
 	maxParts := 2
 	if hintPolicy.Specificity == policy.SpecificityHigh {
 		maxParts = 3
-	}
-	if hintPolicy.Signals.UseThemeMismatch {
-		parts = keepPriorityPart(parts, "周囲と噛み合わない", maxParts)
 	}
 	if len(parts) > maxParts {
 		parts = parts[:maxParts]
 	}
 	text := fmt.Sprintf(tpl, strings.Join(parts, "、"))
 	if repeatedRecentText(text, summary) {
-		text = fmt.Sprintf("%s、別の違和感にも注視せよ", parts[0])
+		text = fmt.Sprintf("%s。別の動きにも注目してくれ", parts[0])
 	}
 	return text, nil
 }
 
-func keepPriorityPart(parts []string, priority string, maxParts int) []string {
-	filtered := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if part == priority {
-			continue
-		}
-		filtered = append(filtered, part)
+func selectFallbackTemplate(hintNumber int) string {
+	if len(fallbackTemplates) == 0 {
+		return "%s"
 	}
-
-	if maxParts <= 0 {
-		return filtered
+	if hintNumber <= 0 {
+		return fallbackTemplates[0]
 	}
-	if len(filtered) >= maxParts {
-		return append(filtered[:maxParts-1], priority)
-	}
-	return append(filtered, priority)
+	return fallbackTemplates[(hintNumber-1)%len(fallbackTemplates)]
 }
 
 func repeatedRecentText(text string, summary ops.RecentHintSummary) bool {

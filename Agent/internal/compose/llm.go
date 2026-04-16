@@ -21,9 +21,10 @@ func NewLLMComposer(client llm.Client) *LLMComposer {
 
 func (c *LLMComposer) Compose(ctx context.Context, ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary) (string, error) {
 	selected := material.SelectMaterials(ev, hintPolicy)
+	directives := buildCandidateDirectives(selected, hintPolicy)
 	input := buildPromptInput(ev, hintPolicy, summary)
 
-	text, issues, err := c.composeBestCandidate(ctx, input, ev, hintPolicy, summary, selected)
+	text, issues, err := c.composeBestCandidate(ctx, input, ev, hintPolicy, summary, selected, directives)
 	if err == nil {
 		return text, nil
 	}
@@ -32,7 +33,7 @@ func (c *LLMComposer) Compose(ctx context.Context, ev evidence.HintEvidence, hin
 	}
 
 	retryInput := buildRepairPromptInput(input, issues.raw, issues.list)
-	text, _, retryErr := c.composeBestCandidate(ctx, retryInput, ev, hintPolicy, summary, selected)
+	text, _, retryErr := c.composeBestCandidate(ctx, retryInput, ev, hintPolicy, summary, selected, directives)
 	if retryErr != nil {
 		return "", fmt.Errorf("candidate generation failed: %w", retryErr)
 	}
@@ -44,7 +45,7 @@ type candidateFailure struct {
 	list []string
 }
 
-func (c *LLMComposer) composeBestCandidate(ctx context.Context, input llm.PromptInput, ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary, selected material.SelectedMaterials) (string, candidateFailure, error) {
+func (c *LLMComposer) composeBestCandidate(ctx context.Context, input llm.PromptInput, ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary, selected material.SelectedMaterials, directives []candidateDirective) (string, candidateFailure, error) {
 	raw, err := c.client.Generate(ctx, input)
 	if err != nil {
 		return "", candidateFailure{}, err
@@ -55,7 +56,7 @@ func (c *LLMComposer) composeBestCandidate(ctx context.Context, input llm.Prompt
 		return "", candidateFailure{raw: raw, list: []string{err.Error()}}, err
 	}
 
-	scored := scoreCandidates(candidates, ev, hintPolicy, summary, selected)
+	scored := scoreCandidates(candidates, ev, hintPolicy, summary, selected, directives)
 	best, err := bestValidCandidate(scored)
 	if err != nil {
 		return "", candidateFailure{raw: raw, list: summarizeCandidateIssues(scored)}, err

@@ -32,6 +32,14 @@ type scoredCandidate struct {
 
 var numberPattern = regexp.MustCompile(`[0-9０-９]`)
 
+var vagueWords = []string{
+	"影",
+	"気配",
+	"違和感",
+	"不穏",
+	"怪しい",
+}
+
 func parseCandidateResponse(raw string) ([]hintCandidate, error) {
 	clean := stripCodeFence(raw)
 	var envelope hintCandidateEnvelope
@@ -56,11 +64,14 @@ func stripCodeFence(raw string) string {
 	return strings.TrimSpace(clean)
 }
 
-func scoreCandidates(candidates []hintCandidate, ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary, selected material.SelectedMaterials) []scoredCandidate {
+func scoreCandidates(candidates []hintCandidate, ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary, selected material.SelectedMaterials, directives []candidateDirective) []scoredCandidate {
 	scored := make([]scoredCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
+	for idx, candidate := range candidates {
 		issues := validateCandidate(candidate, ev, hintPolicy, summary, selected)
 		score := candidateScore(candidate, hintPolicy, summary, selected, issues)
+		if idx < len(directives) {
+			score += directiveFitScore(candidate, directives[idx])
+		}
 		scored = append(scored, scoredCandidate{
 			Candidate: candidate,
 			Score:     score,
@@ -150,8 +161,27 @@ func candidateScore(candidate hintCandidate, hintPolicy policy.HintPolicy, summa
 	if overlapsRecentSignals(candidate.UsedSignals, summary) {
 		score -= 6
 	}
+	if containsConcreteSignalLanguage(candidate.Text, candidate.UsedSignals) {
+		score += 12
+	}
+	if countConcreteClues(candidate.Text, candidate.UsedSignals) >= 2 {
+		score += 10
+	}
+	if containsOnlyVagueCue(candidate.Text) {
+		score -= 18
+	}
+	if containsVagueWord(candidate.Text) && !containsConcreteSignalLanguage(candidate.Text, candidate.UsedSignals) {
+		score -= 8
+	}
 
 	return score
+}
+
+func directiveFitScore(candidate hintCandidate, directive candidateDirective) int {
+	if candidateUsesClue(candidate, directive.PrimaryClue) {
+		return 8
+	}
+	return -4
 }
 
 func applySimilarityPenalties(scored []scoredCandidate, summary ops.RecentHintSummary) {
@@ -250,6 +280,90 @@ func candidateSignalSetsMatch(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func containsConcreteSignalLanguage(text string, usedSignals []string) bool {
+	for _, signal := range usedSignals {
+		if signalHasConcreteCue(text, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func countConcreteClues(text string, usedSignals []string) int {
+	count := 0
+	seen := map[string]struct{}{}
+	for _, signal := range usedSignals {
+		if _, ok := seen[signal]; ok {
+			continue
+		}
+		seen[signal] = struct{}{}
+		if signalHasConcreteCue(text, signal) {
+			count++
+		}
+	}
+	return count
+}
+
+func signalHasConcreteCue(text, signal string) bool {
+	cues := concreteCuesForSignal(signal)
+	for _, cue := range cues {
+		if strings.Contains(text, cue) {
+			return true
+		}
+	}
+	return false
+}
+
+func concreteCuesForSignal(signal string) []string {
+	switch signal {
+	case string(policy.SignalMotion):
+		return []string{"走", "歩", "静止", "止まり", "攻撃", "尻尾"}
+	case string(policy.SignalMouth):
+		return []string{"口を開け", "口が開"}
+	case string(policy.SignalAirborne):
+		return []string{"ジャンプ", "跳"}
+	case string(policy.SignalZone):
+		return []string{"外周", "中央", "中間", "北", "南", "東", "西"}
+	case string(policy.SignalNearWall):
+		return []string{"壁際", "壁の近く"}
+	case string(policy.SignalLandmark):
+		return []string{"岩", "木"}
+	case string(policy.SignalFacing):
+		return []string{"向き", "北向き", "南向き", "東向き", "西向き"}
+	case string(policy.SignalRelation):
+		return []string{"近く", "孤立", "離れ"}
+	case string(policy.SignalThemeMismatch):
+		return []string{"周囲", "噛み合", "流れ"}
+	default:
+		return nil
+	}
+}
+
+func containsOnlyVagueCue(text string) bool {
+	if containsConcreteSignalLanguage(text, []string{
+		string(policy.SignalMotion),
+		string(policy.SignalMouth),
+		string(policy.SignalAirborne),
+		string(policy.SignalZone),
+		string(policy.SignalNearWall),
+		string(policy.SignalLandmark),
+		string(policy.SignalFacing),
+		string(policy.SignalRelation),
+	}) {
+		return false
+	}
+	return containsVagueWord(text)
+}
+
+func containsVagueWord(text string) bool {
+	for _, word := range vagueWords {
+		if strings.Contains(text, word) {
+			return true
+		}
+	}
+	return false
 }
 
 func textSimilarity(a, b string) float64 {

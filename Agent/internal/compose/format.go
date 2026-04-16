@@ -23,7 +23,7 @@ func describeEnemyForPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPoli
 	}
 	if selected.Contains(material.ClueLocation) {
 		if hintPolicy.Signals.UseZone {
-			lines = append(lines, "位置: "+formatZone(enemy.Zone, hintPolicy.Specificity))
+			lines = append(lines, "位置: "+formatZone(enemy.Zone, enemy.Environment, hintPolicy.Specificity))
 		}
 
 		environmentParts := []string{}
@@ -77,7 +77,7 @@ func orderedHintParts(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, se
 	locationParts := []string{}
 	if selected.Contains(material.ClueLocation) {
 		if hintPolicy.Signals.UseZone {
-			locationParts = append(locationParts, formatZone(ev.Enemy.Zone, hintPolicy.Specificity))
+			locationParts = append(locationParts, formatZone(ev.Enemy.Zone, ev.Enemy.Environment, hintPolicy.Specificity))
 		}
 		if hintPolicy.Signals.UseNearWall && ev.Enemy.Environment.NearWall {
 			locationParts = append(locationParts, "壁際")
@@ -145,7 +145,15 @@ func compactHintParts(parts ...string) []string {
 	return result
 }
 
-func formatZone(zone evidence.ZoneEvidence, specificity policy.HintSpecificity) string {
+func formatZone(zone evidence.ZoneEvidence, env evidence.EnvironmentEvidence, specificity policy.HintSpecificity) string {
+	if env.NearShore {
+		direction := formatZoneDirection(zone)
+		if specificity == policy.SpecificityLow || direction == "" {
+			return "水際付近"
+		}
+		return direction + "の水際"
+	}
+
 	proximity := formatProximity(zone.Proximity)
 	if specificity == policy.SpecificityLow {
 		return proximity + "付近"

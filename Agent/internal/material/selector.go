@@ -61,11 +61,11 @@ func SelectMaterials(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) Sel
 func prioritizedClues(focus policy.HintFocus) []ClueKind {
 	switch focus {
 	case policy.FocusLocation:
-		return []ClueKind{ClueLocation, ClueMovement, ClueRelation, ClueThemeMismatch, ClueFacing}
+		return []ClueKind{ClueLocation, ClueMovement, ClueRelation, ClueFacing, ClueThemeMismatch}
 	case policy.FocusRelation:
-		return []ClueKind{ClueRelation, ClueMovement, ClueLocation, ClueThemeMismatch, ClueFacing}
+		return []ClueKind{ClueRelation, ClueMovement, ClueLocation, ClueFacing, ClueThemeMismatch}
 	default:
-		return []ClueKind{ClueMovement, ClueThemeMismatch, ClueLocation, ClueRelation, ClueFacing}
+		return []ClueKind{ClueMovement, ClueLocation, ClueRelation, ClueFacing, ClueThemeMismatch}
 	}
 }
 

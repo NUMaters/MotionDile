@@ -9,7 +9,7 @@ import (
 	"agent/internal/policy"
 )
 
-func TestSelectMaterials_PrefersMovementThemeMismatchAndLocation(t *testing.T) {
+func TestSelectMaterials_PrefersMovementLocationAndRelationBeforeThemeMismatch(t *testing.T) {
 	ev := evidence.BuildHintEvidence(domain.HintRequest{
 		RoomID:       "room-1",
 		HintNumber:   2,
@@ -45,7 +45,7 @@ func TestSelectMaterials_PrefersMovementThemeMismatchAndLocation(t *testing.T) {
 		t.Fatalf("expected 3 selected clues, got %d (%v)", len(selected.Clues), selected.Clues)
 	}
 
-	expected := []ClueKind{ClueMovement, ClueThemeMismatch, ClueLocation}
+	expected := []ClueKind{ClueMovement, ClueLocation, ClueRelation}
 	for i, clue := range expected {
 		if selected.Clues[i] != clue {
 			t.Fatalf("expected clue %d to be %s, got %s", i, clue, selected.Clues[i])
