@@ -7,6 +7,7 @@ import (
 
 	"agent/internal/domain"
 	"agent/internal/evidence"
+	"agent/internal/ops"
 	"agent/internal/policy"
 )
 
@@ -22,7 +23,7 @@ func TestTemplateComposer_RespectsInformationPending(t *testing.T) {
 		},
 	})
 
-	text, err := NewTemplateComposer().Compose(context.Background(), ev, policy.BuildHintPolicy(ev))
+	text, err := NewTemplateComposer().Compose(context.Background(), ev, policy.BuildHintPolicy(ev, ops.RecentHintSummary{}), ops.RecentHintSummary{})
 	if err != nil {
 		t.Fatalf("compose returned error: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestTemplateComposer_UsesThemeMismatchWhenAvailable(t *testing.T) {
 		},
 	})
 
-	text, err := NewTemplateComposer().Compose(context.Background(), ev, policy.BuildHintPolicy(ev))
+	text, err := NewTemplateComposer().Compose(context.Background(), ev, policy.BuildHintPolicy(ev, ops.RecentHintSummary{}), ops.RecentHintSummary{})
 	if err != nil {
 		t.Fatalf("compose returned error: %v", err)
 	}

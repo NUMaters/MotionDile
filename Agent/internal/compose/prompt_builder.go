@@ -6,6 +6,8 @@ import (
 
 	"agent/internal/evidence"
 	"agent/internal/llm"
+	"agent/internal/material"
+	"agent/internal/ops"
 	"agent/internal/policy"
 )
 
@@ -35,7 +37,9 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 - 禁止: 「監視AI通報」「通報:」などのラベル、絵文字、個人特定に繋がる記述
 - 毎回異なる表現を使い、同じパターンの繰り返しを避ける`
 
-func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) llm.PromptInput {
+func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary) llm.PromptInput {
+	selected := material.SelectMaterials(ev, hintPolicy)
+
 	if ev.Enemy == nil {
 		return llm.PromptInput{
 			System: systemPrompt,
@@ -49,7 +53,20 @@ func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) ll
 	sb.WriteString(fmt.Sprintf("→ 具体度: %s / 主軸: %s\n", formatSpecificity(hintPolicy.Specificity), formatFocus(hintPolicy.PrimaryFocus)))
 	sb.WriteString("→ 具体度ルール: 15秒付近=小ヒント、30秒付近=中ヒント、45秒以降=強ヒント\n")
 	sb.WriteString(fmt.Sprintf("→ 使ってよい情報: %s\n", strings.Join(allowedSignalLabels(hintPolicy), "、")))
+	sb.WriteString(fmt.Sprintf("→ 今回使う材料: %s\n", strings.Join(selectedMaterialLabels(selected), "、")))
+	sb.WriteString(fmt.Sprintf("→ 今回使える signal 名: %s\n", strings.Join(selectedSignalNames(selected, hintPolicy), ", ")))
+	sb.WriteString(fmt.Sprintf("→ 手がかり数の上限: %d\n", hintPolicy.MaxClues))
 	sb.WriteString("→ 禁止: 名前、色、数値距離、個人特定につながる表現\n\n")
+
+	if len(summary.RecentTexts) > 0 {
+		sb.WriteString("【直近ヒント履歴】\n")
+		for _, text := range summary.RecentTexts {
+			sb.WriteString("- ")
+			sb.WriteString(text)
+			sb.WriteString("\n")
+		}
+		sb.WriteString("- 直近と同じ表現や同じ切り口の繰り返しは避けてください\n\n")
+	}
 
 	if ev.Request.AllyTheme != "" || ev.Request.EnemyTheme != "" {
 		sb.WriteString("【行動ミッション（テーマ）】\n")
@@ -63,18 +80,44 @@ func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) ll
 	}
 
 	sb.WriteString("【敵ワニの観測事実】\n")
-	for _, line := range describeEnemyForPrompt(ev, hintPolicy) {
+	for _, line := range describeEnemyForPrompt(ev, hintPolicy, selected) {
 		sb.WriteString("- ")
 		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("\n1〜2文のヒントを1つだけ生成してください。")
-	sb.WriteString(" 主軸に沿って組み立て、使ってよい情報だけを採用してください。")
-	sb.WriteString(" 前置き・役割名・見出しは付けず、本文のみ1行で出力してください。")
+	sb.WriteString("\n【出力形式】\n")
+	sb.WriteString("JSONのみを返してください。Markdownのコードフェンスや説明文は不要です。\n")
+	sb.WriteString(fmt.Sprintf("candidates は %d 件にしてください。\n", hintPolicy.CandidateCount))
+	sb.WriteString("各 candidate は次の形です:\n")
+	sb.WriteString(`{"text":"ヒント本文","used_signals":["motion","zone"]}` + "\n")
+	sb.WriteString("text は 1〜2文、50文字以内、前置きなし、1行のみ。\n")
+	sb.WriteString("used_signals は今回使える signal 名だけを 1 個以上入れ、手がかり数の上限を超えないでください。\n")
+	sb.WriteString("候補同士は表現や切り口を少し変えてください。\n")
+	sb.WriteString("主軸に沿って組み立て、使ってよい情報だけを採用してください。")
 
 	return llm.PromptInput{
 		System: systemPrompt,
+		User:   sb.String(),
+	}
+}
+
+func buildRepairPromptInput(base llm.PromptInput, raw string, issues []string) llm.PromptInput {
+	var sb strings.Builder
+	sb.WriteString(base.User)
+	sb.WriteString("\n\n【前回出力】\n")
+	sb.WriteString(raw)
+	sb.WriteString("\n\n【修正指示】\n")
+	sb.WriteString("前回出力はそのままでは使えません。次の問題を直して、同じ JSON 形式だけを再出力してください。\n")
+	for _, issue := range issues {
+		sb.WriteString("- ")
+		sb.WriteString(issue)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("必ず JSON 本文のみを返してください。")
+
+	return llm.PromptInput{
+		System: base.System,
 		User:   sb.String(),
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"agent/internal/evidence"
+	"agent/internal/material"
+	"agent/internal/ops"
 	"agent/internal/policy"
 )
 
@@ -23,12 +25,13 @@ func NewTemplateComposer() *TemplateComposer {
 	return &TemplateComposer{}
 }
 
-func (c *TemplateComposer) Compose(_ context.Context, ev evidence.HintEvidence, hintPolicy policy.HintPolicy) (string, error) {
+func (c *TemplateComposer) Compose(_ context.Context, ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary) (string, error) {
 	if ev.Enemy == nil || hintPolicy.Action == policy.ActionInformationPending {
 		return informationPendingText, nil
 	}
 
-	parts := orderedHintParts(ev, hintPolicy)
+	selected := material.SelectMaterials(ev, hintPolicy)
+	parts := orderedHintParts(ev, hintPolicy, selected)
 	if len(parts) == 0 {
 		return "不審な動きあり。警戒せよ", nil
 	}
@@ -44,7 +47,11 @@ func (c *TemplateComposer) Compose(_ context.Context, ev evidence.HintEvidence, 
 	if len(parts) > maxParts {
 		parts = parts[:maxParts]
 	}
-	return fmt.Sprintf(tpl, strings.Join(parts, "、")), nil
+	text := fmt.Sprintf(tpl, strings.Join(parts, "、"))
+	if repeatedRecentText(text, summary) {
+		text = fmt.Sprintf("%s、別の違和感にも注視せよ", parts[0])
+	}
+	return text, nil
 }
 
 func keepPriorityPart(parts []string, priority string, maxParts int) []string {
@@ -63,4 +70,13 @@ func keepPriorityPart(parts []string, priority string, maxParts int) []string {
 		return append(filtered[:maxParts-1], priority)
 	}
 	return append(filtered, priority)
+}
+
+func repeatedRecentText(text string, summary ops.RecentHintSummary) bool {
+	for _, recent := range summary.RecentTexts {
+		if recent == text {
+			return true
+		}
+	}
+	return false
 }

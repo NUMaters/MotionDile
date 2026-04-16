@@ -8,6 +8,7 @@ import (
 	"agent/internal/config"
 	"agent/internal/infrastructure/openai"
 	agenthttp "agent/internal/interface/http"
+	"agent/internal/ops"
 	"agent/internal/usecase"
 )
 
@@ -20,7 +21,8 @@ func main() {
 	ai := openai.NewClient(cfg.OpenAIKey)
 	llmComposer := compose.NewLLMComposer(ai)
 	templateComposer := compose.NewTemplateComposer()
-	uc := usecase.NewHintUsecase(llmComposer, templateComposer)
+	historyStore := ops.NewMemoryHintHistoryStore()
+	uc := usecase.NewHintUsecase(llmComposer, templateComposer, historyStore)
 	handler := agenthttp.NewHintHandler(uc)
 
 	mux := http.NewServeMux()

@@ -4,66 +4,69 @@ import (
 	"strings"
 
 	"agent/internal/evidence"
+	"agent/internal/material"
 	"agent/internal/policy"
 )
 
-func describeEnemyForPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) []string {
+func describeEnemyForPrompt(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, selected material.SelectedMaterials) []string {
 	lines := []string{}
 	if ev.Enemy == nil {
 		return lines
 	}
 
 	enemy := *ev.Enemy
-	if hintPolicy.Signals.UseMotion {
+	if selected.Contains(material.ClueMovement) && hintPolicy.Signals.UseMotion {
 		lines = append(lines, "行動: "+formatMotion(enemy.Motion, hintPolicy.Signals.UseMouth))
 	}
-	if hintPolicy.Signals.UseAirborne && enemy.Motion.IsAirborneByAnimTag {
+	if selected.Contains(material.ClueMovement) && hintPolicy.Signals.UseAirborne && enemy.Motion.IsAirborneByAnimTag {
 		lines = append(lines, "補助特徴: ジャンプしている様子")
 	}
-	if hintPolicy.Signals.UseZone {
-		lines = append(lines, "位置: "+formatZone(enemy.Zone, hintPolicy.Specificity))
-	}
+	if selected.Contains(material.ClueLocation) {
+		if hintPolicy.Signals.UseZone {
+			lines = append(lines, "位置: "+formatZone(enemy.Zone, hintPolicy.Specificity))
+		}
 
-	environmentParts := []string{}
-	if hintPolicy.Signals.UseNearWall && enemy.Environment.NearWall {
-		environmentParts = append(environmentParts, "境界の壁際")
-	}
-	if hintPolicy.Signals.UseLandmark {
-		near := formatNearbyLandmark(enemy.Environment.NearbyLandmark)
-		if near != "" {
-			environmentParts = append(environmentParts, near)
+		environmentParts := []string{}
+		if hintPolicy.Signals.UseNearWall && enemy.Environment.NearWall {
+			environmentParts = append(environmentParts, "境界の壁際")
+		}
+		if hintPolicy.Signals.UseLandmark {
+			near := formatNearbyLandmark(enemy.Environment.NearbyLandmark)
+			if near != "" {
+				environmentParts = append(environmentParts, near)
+			}
+		}
+		if len(environmentParts) > 0 {
+			lines = append(lines, "周辺: "+strings.Join(environmentParts, "、"))
 		}
 	}
-	if len(environmentParts) > 0 {
-		lines = append(lines, "周辺: "+strings.Join(environmentParts, "、"))
-	}
 
-	if hintPolicy.Signals.UseFacing {
+	if selected.Contains(material.ClueFacing) && hintPolicy.Signals.UseFacing {
 		lines = append(lines, "向き: "+formatFacing(enemy.Facing))
 	}
-	if hintPolicy.Signals.UseRelation {
+	if selected.Contains(material.ClueRelation) && hintPolicy.Signals.UseRelation {
 		relation := formatRelation(ev)
 		if relation != "" {
 			lines = append(lines, "関係性: "+relation)
 		}
 	}
-	if hintPolicy.Signals.UseThemeMismatch {
+	if selected.Contains(material.ClueThemeMismatch) && hintPolicy.Signals.UseThemeMismatch {
 		lines = append(lines, formatThemeMismatchHint(ev.Request.AllyTheme, ev.Request.EnemyTheme))
 	}
 
 	return lines
 }
 
-func orderedHintParts(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) []string {
+func orderedHintParts(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, selected material.SelectedMaterials) []string {
 	if ev.Enemy == nil {
 		return nil
 	}
 
 	movement := ""
-	if hintPolicy.Signals.UseMotion {
+	if selected.Contains(material.ClueMovement) && hintPolicy.Signals.UseMotion {
 		movement = formatMotion(ev.Enemy.Motion, hintPolicy.Signals.UseMouth)
 	}
-	if hintPolicy.Signals.UseAirborne && ev.Enemy.Motion.IsAirborneByAnimTag {
+	if selected.Contains(material.ClueMovement) && hintPolicy.Signals.UseAirborne && ev.Enemy.Motion.IsAirborneByAnimTag {
 		if movement != "" {
 			movement += "、ジャンプ気味"
 		} else {
@@ -72,31 +75,33 @@ func orderedHintParts(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) []
 	}
 
 	locationParts := []string{}
-	if hintPolicy.Signals.UseZone {
-		locationParts = append(locationParts, formatZone(ev.Enemy.Zone, hintPolicy.Specificity))
-	}
-	if hintPolicy.Signals.UseNearWall && ev.Enemy.Environment.NearWall {
-		locationParts = append(locationParts, "壁際")
-	}
-	if hintPolicy.Signals.UseLandmark {
-		if near := formatNearbyLandmark(ev.Enemy.Environment.NearbyLandmark); near != "" {
-			locationParts = append(locationParts, near)
+	if selected.Contains(material.ClueLocation) {
+		if hintPolicy.Signals.UseZone {
+			locationParts = append(locationParts, formatZone(ev.Enemy.Zone, hintPolicy.Specificity))
+		}
+		if hintPolicy.Signals.UseNearWall && ev.Enemy.Environment.NearWall {
+			locationParts = append(locationParts, "壁際")
+		}
+		if hintPolicy.Signals.UseLandmark {
+			if near := formatNearbyLandmark(ev.Enemy.Environment.NearbyLandmark); near != "" {
+				locationParts = append(locationParts, near)
+			}
 		}
 	}
 	location := strings.Join(locationParts, "の")
 
 	relation := ""
-	if hintPolicy.Signals.UseRelation {
+	if selected.Contains(material.ClueRelation) && hintPolicy.Signals.UseRelation {
 		relation = formatRelation(ev)
 	}
 
 	facing := ""
-	if hintPolicy.Signals.UseFacing {
+	if selected.Contains(material.ClueFacing) && hintPolicy.Signals.UseFacing {
 		facing = formatFacing(ev.Enemy.Facing)
 	}
 
 	themeMismatch := ""
-	if hintPolicy.Signals.UseThemeMismatch {
+	if selected.Contains(material.ClueThemeMismatch) && hintPolicy.Signals.UseThemeMismatch {
 		themeMismatch = "周囲と噛み合わない"
 	}
 
@@ -108,6 +113,25 @@ func orderedHintParts(ev evidence.HintEvidence, hintPolicy policy.HintPolicy) []
 	default:
 		return compactHintParts(movement, location, relation, themeMismatch, facing)
 	}
+}
+
+func selectedMaterialLabels(selected material.SelectedMaterials) []string {
+	labels := make([]string, 0, len(selected.Clues))
+	for _, clue := range selected.Clues {
+		switch clue {
+		case material.ClueMovement:
+			labels = append(labels, "行動")
+		case material.ClueLocation:
+			labels = append(labels, "位置")
+		case material.ClueFacing:
+			labels = append(labels, "向き")
+		case material.ClueRelation:
+			labels = append(labels, "関係性")
+		case material.ClueThemeMismatch:
+			labels = append(labels, "テーマとのズレ")
+		}
+	}
+	return labels
 }
 
 func compactHintParts(parts ...string) []string {

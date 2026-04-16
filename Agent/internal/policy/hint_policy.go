@@ -1,6 +1,9 @@
 package policy
 
-import "agent/internal/evidence"
+import (
+	"agent/internal/evidence"
+	"agent/internal/ops"
+)
 
 type HintAction string
 
@@ -32,6 +35,25 @@ const (
 	ComposerTemplate ComposerKind = "template"
 )
 
+type SignalName string
+
+const (
+	SignalMotion        SignalName = "motion"
+	SignalMouth         SignalName = "mouth"
+	SignalAirborne      SignalName = "airborne"
+	SignalZone          SignalName = "zone"
+	SignalNearWall      SignalName = "near_wall"
+	SignalLandmark      SignalName = "landmark"
+	SignalFacing        SignalName = "facing"
+	SignalRelation      SignalName = "relation"
+	SignalThemeMismatch SignalName = "theme_mismatch"
+
+	SignalNameDirect      SignalName = "name"
+	SignalColor           SignalName = "color"
+	SignalNumericDistance SignalName = "numeric_distance"
+	SignalThemeName       SignalName = "theme_name"
+)
+
 type HintSignals struct {
 	UseZone          bool
 	UseMotion        bool
@@ -45,19 +67,28 @@ type HintSignals struct {
 }
 
 type HintPolicy struct {
-	Action       HintAction
-	Specificity  HintSpecificity
-	PrimaryFocus HintFocus
-	Signals      HintSignals
-	Composer     ComposerKind
+	Action                   HintAction
+	Specificity              HintSpecificity
+	PrimaryFocus             HintFocus
+	Signals                  HintSignals
+	Composer                 ComposerKind
+	AllowedSignals           []SignalName
+	ForbiddenSignals         []SignalName
+	MaxClues                 int
+	CandidateCount           int
+	RequireThemeMismatchHint bool
+	RetryEnabled             bool
 }
 
-func BuildHintPolicy(ev evidence.HintEvidence) HintPolicy {
+func BuildHintPolicy(ev evidence.HintEvidence, summary ops.RecentHintSummary) HintPolicy {
 	p := HintPolicy{
-		Action:       ActionGenerateHint,
-		Specificity:  specificityFromElapsedSec(ev.Request.ElapsedSec),
-		PrimaryFocus: FocusMovement,
-		Composer:     ComposerLLM,
+		Action:         ActionGenerateHint,
+		Specificity:    specificityFromElapsedSec(ev.Request.ElapsedSec),
+		PrimaryFocus:   FocusMovement,
+		Composer:       ComposerLLM,
+		MaxClues:       2,
+		CandidateCount: 3,
+		RetryEnabled:   true,
 		Signals: HintSignals{
 			UseZone:   true,
 			UseMotion: true,
@@ -67,6 +98,8 @@ func BuildHintPolicy(ev evidence.HintEvidence) HintPolicy {
 	if ev.Enemy == nil {
 		p.Action = ActionInformationPending
 		p.Composer = ComposerTemplate
+		p.RetryEnabled = false
+		p.ForbiddenSignals = defaultForbiddenSignals()
 		return p
 	}
 
@@ -81,11 +114,51 @@ func BuildHintPolicy(ev evidence.HintEvidence) HintPolicy {
 		p.Signals.UseThemeMismatch = shouldUseThemeMismatch(ev)
 	}
 
-	if p.Specificity == SpecificityHigh {
-		p.PrimaryFocus = chooseHighSpecificityFocus(ev)
+	switch p.Specificity {
+	case SpecificityMedium:
+		p.MaxClues = 3
+	case SpecificityHigh:
+		p.MaxClues = 3
 	}
 
+	if p.Specificity == SpecificityHigh {
+		p.PrimaryFocus = chooseHighSpecificityFocus(ev, summary)
+	}
+
+	p.AllowedSignals = buildAllowedSignals(p.Signals)
+	p.ForbiddenSignals = defaultForbiddenSignals()
+	p.RequireThemeMismatchHint = p.Signals.UseThemeMismatch
+
 	return p
+}
+
+func buildAllowedSignals(signals HintSignals) []SignalName {
+	allowed := make([]SignalName, 0, 9)
+	appendIf := func(enabled bool, signal SignalName) {
+		if enabled {
+			allowed = append(allowed, signal)
+		}
+	}
+
+	appendIf(signals.UseMotion, SignalMotion)
+	appendIf(signals.UseMouth, SignalMouth)
+	appendIf(signals.UseAirborne, SignalAirborne)
+	appendIf(signals.UseZone, SignalZone)
+	appendIf(signals.UseNearWall, SignalNearWall)
+	appendIf(signals.UseLandmark, SignalLandmark)
+	appendIf(signals.UseFacing, SignalFacing)
+	appendIf(signals.UseRelation, SignalRelation)
+	appendIf(signals.UseThemeMismatch, SignalThemeMismatch)
+	return allowed
+}
+
+func defaultForbiddenSignals() []SignalName {
+	return []SignalName{
+		SignalNameDirect,
+		SignalColor,
+		SignalNumericDistance,
+		SignalThemeName,
+	}
 }
 
 func shouldUseThemeMismatch(ev evidence.HintEvidence) bool {
@@ -103,8 +176,11 @@ func specificityFromElapsedSec(elapsedSec int) HintSpecificity {
 	}
 }
 
-func chooseHighSpecificityFocus(ev evidence.HintEvidence) HintFocus {
+func chooseHighSpecificityFocus(ev evidence.HintEvidence, summary ops.RecentHintSummary) HintFocus {
 	if ev.Enemy == nil {
+		return FocusMovement
+	}
+	if len(summary.RecentFocuses) > 0 && summary.RecentFocuses[0] == string(FocusLocation) {
 		return FocusMovement
 	}
 	if hasStrongLocationCue(*ev.Enemy) {
