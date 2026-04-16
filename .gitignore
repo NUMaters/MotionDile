@@ -20,3 +20,4 @@ medea-pipeline/data/hand-dataset.json
 **/.env.*
 !.env.example
 !**/.env.example
+node_modules
