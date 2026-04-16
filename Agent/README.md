@@ -134,7 +134,7 @@ go run ./cmd/server
 
 | 変数 | 説明 | デフォルト |
 |------|------|-----------|
-| `OPENAI_API_KEY` | OpenAI API キー | (必須) |
+| `OPENAI_API_KEY` | OpenAI API キー | 未設定時はヒント・テーマがルールベースのみ（開発用）。本番や LLM ヒント利用時は必須 |
 | `AGENT_PORT` | サーバーポート | `8091` |
 
 ## ゲームサーバーとの連携

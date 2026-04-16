@@ -29,6 +29,44 @@ const camVideo = getEl<HTMLVideoElement>('cam-video');
 const camPreview = getEl<HTMLElement>('cam-preview');
 const camOverlay = getEl<HTMLCanvasElement>('cam-overlay');
 
+/** 検出スロットル中もフェーズ判定に使う直近のランドマーク有無 */
+let lastProcessedHadLandmarks = false;
+/** 手が映ったフレームでホールド開始時刻（検知後もガイドをしばらく表示） */
+let handGuideHoldStartMs: number | null = null;
+
+const HAND_GUIDE_HOLD_AFTER_DETECT_MS = 500;
+
+function updateHandGuideOverlay(now: number, hasLandmarks: boolean): void {
+  const el = document.getElementById('cam-hand-guide') as HTMLElement | null;
+  if (!el) return;
+
+  const ready =
+    cameraActive && handLandmarker !== null && camVideo.readyState >= 2;
+  if (!ready) {
+    el.hidden = true;
+    el.style.opacity = '0';
+    handGuideHoldStartMs = null;
+    return;
+  }
+
+  el.hidden = false;
+
+  if (!hasLandmarks) {
+    handGuideHoldStartMs = null;
+    el.style.opacity = '1';
+    return;
+  }
+
+  if (handGuideHoldStartMs === null) {
+    handGuideHoldStartMs = now;
+  }
+  if (now - handGuideHoldStartMs < HAND_GUIDE_HOLD_AFTER_DETECT_MS) {
+    el.style.opacity = '1';
+  } else {
+    el.style.opacity = '0';
+  }
+}
+
 const qNeck = new THREE.Quaternion();
 
 export { composeNeckDeltaQuaternion };
@@ -183,6 +221,9 @@ async function startCamera(): Promise<boolean> {
   try {
     handLandmarker = await initHandLandmarkerWithFallback();
     cameraActive = true;
+    lastProcessedHadLandmarks = false;
+    handGuideHoldStartMs = null;
+    updateHandGuideOverlay(performance.now(), false);
     console.log('Hand tracking ready');
     return true;
   } catch (mpErr) {
@@ -516,12 +557,21 @@ function processHandResults(results: HandLandmarkerVideoResult) {
 }
 
 export function updateHandTracking(now: number): void {
-  if (!cameraActive || !handLandmarker || camVideo.readyState < 2) return;
-  if (now - lastHandTime < HAND_DETECT_INTERVAL) return;
+  if (!cameraActive || !handLandmarker || camVideo.readyState < 2) {
+    updateHandGuideOverlay(now, false);
+    return;
+  }
+  if (now - lastHandTime < HAND_DETECT_INTERVAL) {
+    updateHandGuideOverlay(now, lastProcessedHadLandmarks);
+    return;
+  }
   lastHandTime = now;
 
   const results = handLandmarker.detectForVideo(camVideo, now);
   processHandResults(results);
+  const hasLm = !!(results.landmarks && results.landmarks.length > 0);
+  lastProcessedHadLandmarks = hasLm;
+  updateHandGuideOverlay(now, hasLm);
 }
 
 export function applyHeadTracking(

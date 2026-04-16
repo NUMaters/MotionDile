@@ -92,8 +92,9 @@
 - **行動テーマシステム** — ゲーム開始時に市民チームと敵ワニにそれぞれ異なる「行動ミッション（テーマ）」をランダム割り当て（`usecase/themes.go`）。例:「障害物の近くを移動する」「マップの外周を歩き回る」等。各プレイヤーには自分のテーマのみ表示され、陣営は直接通知されない。プレイヤーはテーマに沿って行動しつつ、**異なる動きをしている敵ワニ**を探す。テーマは `game_start` WebSocket メッセージで各クライアントに送信、`GameState` に `AllyTheme`/`EnemyTheme` として保存される
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、**市民テーマと敵テーマの両方**を受け取り、敵の行動がテーマと合わないことを示唆するヒントを生成。ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与。フロントは `screens.ts` の `showHint` が Web Animations API で、**行動テーマバッジ直下**（`#agent-hint-danmaku`）へ**弾幕風の横スクロール**で表示（従来の画面中央ポップアップは廃止）
 - **Vite v6.2** — 開発サーバー・ビルドツール（`@vitejs/plugin-vue` で `.vue` を処理し、`.ts` をトランスパイル）
+- **concurrently** — `npm run dev:all` で game backend・Agent・Vite を一括起動（`-k` でいずれか終了時に他プロセスも停止）
 - **serve** — 静的 HTTP サーバー（ビューア配信）
-- **`game/frontend/src/config.ts`** — ゲーム定数の集約。**`GAME_RULES`**（プレイ時間・マッチ開始前カウントダウン・投票・ヒント間隔・結果待ち・最小／最大人数の既定。`VITE_WANIAR_*` で上書き）と **`game-rules.ts`**（`WebSocket` の `game_state.rules` でサーバ値に同期）を参照。バックエンドの対応環境変数は `WANIAR_*`（`game/backend/internal/config/rules.go`）。`FALLBACK_PLAYER_COLOR` はサーバ未割当時のラベル／投票プレビュー用アクセント（青系を避ける）。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_FEATURE_EMA_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker 公式 **float16** `.task` と WASM／GPU・CPU フォールバック、検出しきい値は任意）
+- **`game/frontend/src/config.ts`** — ゲーム定数の集約。**`GAME_RULES`**（プレイ時間・マッチ開始前カウントダウン・投票・ヒント間隔・結果待ち・最小／最大人数の既定。`VITE_WANIAR_*` で上書き）と **`game-rules.ts`**（`WebSocket` の `game_state.rules` でサーバ値に同期）を参照。バックエンドの対応環境変数は `WANIAR_*`（`game/backend/internal/config/rules.go`）。`FALLBACK_PLAYER_COLOR` はサーバ未割当時のラベル／投票プレビュー用アクセント（青系を避ける）。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_FEATURE_EMA_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker 公式 **float16** `.task` と WASM／GPU・CPU フォールバック、検出しきい値は任意）。手が検出されていないフレームでは `public/hand-guide.png` を `#cam-hand-guide` でカメラプレビュー上に重ね、置き方のガイドとして表示する（CSS `mix-blend-mode: screen` と `filter` で黄緑トーン、検知後も約 0.5 秒は表示してから `opacity` でフェードアウト／手が離れるとフェードイン）
 
 ### 3D モデルパイプライン
 
@@ -157,9 +158,9 @@ Hips
 npm install
 npm run build:model   # Wani_game.glb を生成
 npm run viewer        # http://localhost:3000/viewer でビューア起動
-npm run dev           # Go backend(8080) + Vite frontend(5173~) を同時起動
+npm run dev           # Vite フロントエンドのみ（既定 5173。`/game-api` 等は game backend 起動時にプロキシ）
 npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + WebSocket, 8090）
-npm run dev:all       # game backend(8090) + agent(8091) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）
+npm run dev:all       # game backend(8090) + agent(8091) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）。**初回は `go run` が2本同時にコンパイルするため、数十秒〜1分ほど各プロセスのログが出ない時間帯があります（フリーズではありません）**。LLM ヒント・テーマを使う場合は **`Agent/.env` に `OPENAI_API_KEY`** を書く（`go run -C Agent` の作業ディレクトリが `Agent/` のため、リポジトリ直下の `.env` だけでは Agent は読みません）
 npm run down:all      # dev:all で使う 5173/8090/8091 を一括停止（`scripts/down-all.mjs` + kill-port。macOS / Windows 共通）
 npm run pipeline:train:example  # サンプルデータから手モデル生成（public/models/hand-control-model.json）
 ```

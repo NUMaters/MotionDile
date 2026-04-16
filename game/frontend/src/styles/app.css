@@ -1144,12 +1144,33 @@ body { position: relative; }
   right: auto;
   left: max(2px, env(safe-area-inset-left, 0px));
 }
-#cam-video, #cam-overlay {
+#cam-video, #cam-overlay, #cam-hand-guide {
   position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   object-fit: cover;
 }
-#cam-overlay { pointer-events: none; }
+/* 黒背景のガイドPNGをカメラ映像の上に重ねる（黒は screen で透過に近づける）。黄緑トーン＋ opacity は JS でフェード */
+#cam-hand-guide {
+  object-fit: contain;
+  z-index: 1;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 1;
+  transition: opacity 0.38s ease-in-out;
+  filter: sepia(1) saturate(2.4) hue-rotate(58deg) brightness(1.12) contrast(1.05);
+}
+#cam-hand-guide[hidden] {
+  display: none !important;
+}
+/* 左右反転ボタン時はガイド画像もカメラ枠内で水平反転（映像・ランドマークは従来どおり） */
+.game-shell--ui-mirrored #cam-hand-guide {
+  transform: scaleX(-1);
+  transform-origin: center center;
+}
+#cam-overlay {
+  z-index: 2;
+  pointer-events: none;
+}
 
 /* ─── CSS2DRenderer overlay ─── */
 #label-renderer {
