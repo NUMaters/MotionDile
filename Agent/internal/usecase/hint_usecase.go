@@ -8,19 +8,26 @@ import (
 
 	"agent/internal/domain"
 	"agent/internal/evidence"
-	"agent/internal/infrastructure/openai"
 	"agent/internal/policy"
 )
 
-type HintUsecase struct {
-	ai *openai.Client
+// ChatCompleter は Bedrock / OpenAI など LLM バックエンドの共通インターフェース。
+type ChatCompleter interface {
+	ChatCompletion(ctx context.Context, system, user string) (string, error)
 }
 
-func NewHintUsecase(ai *openai.Client) *HintUsecase {
+type HintUsecase struct {
+	ai ChatCompleter
+}
+
+func NewHintUsecase(ai ChatCompleter) *HintUsecase {
+	if ai == nil {
+		return &HintUsecase{}
+	}
 	return &HintUsecase{ai: ai}
 }
 
-// Generate は HintRequest を受け取り、OpenAI でヒントを生成して返す。
+// Generate は HintRequest を受け取り、LLM でヒントを生成して返す。
 // API 障害時はフォールバックで静的ヒントを返す。
 func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (domain.HintResponse, error) {
 	hintEvidence := evidence.BuildHintEvidence(req)
@@ -32,9 +39,14 @@ func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (dom
 
 	userPrompt := buildUserPrompt(hintEvidence, hintPolicy)
 
+	if u.ai == nil {
+		log.Printf("[agent] LLM is not configured, using fallback hint")
+		return domain.HintResponse{Text: fallbackHint(hintEvidence, hintPolicy)}, nil
+	}
+
 	text, err := u.ai.ChatCompletion(ctx, systemPrompt, userPrompt)
 	if err != nil {
-		log.Printf("[agent] OpenAI error, falling back: %v", err)
+		log.Printf("[agent] LLM error, falling back: %v", err)
 		return domain.HintResponse{Text: fallbackHint(hintEvidence, hintPolicy)}, nil
 	}
 

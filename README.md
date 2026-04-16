@@ -14,6 +14,10 @@
 
 手動の例: `cmake -S . -B build && cmake --build build` → 実行ファイルのパスはジェネレータにより `build/native/waniar_native_check` または `build/waniar_native_check` など。`CMAKE_EXPORT_COMPILE_COMMANDS=ON` により `build/compile_commands.json` が出力され、clangd 等で参照できます。
 
+## AWS / Terraform（雛形）
+
+クラウド移行用に **`infra/terraform/`** に VPC・ECR・ECS Fargate・ALB・（任意で）**S3 + CloudFront** の **dev 向け最小構成** を置いています。`game/backend` と `Agent` はそれぞれ **別 ALB**（HTTP:80）で公開し、ヘルスチェックは `GET /healthz`（ゲーム）と `GET /health`（Agent）です。フロントは **`modules/static_frontend`** でプライベート S3 + OAC 経由の CloudFront を作成し、**`/api/*`・`/ws*` を game-backend の ALB にプロキシ**するため HTTPS の CloudFront からでも API/WebSocket を同一オリジンで利用できます。デプロイは **`npm run build:aws`**（出力 **`dist/`**）→ **`aws s3 sync`** → 無効化、または一括の **`scripts/deploy-aws.sh`**。Agent の LLM は **Amazon Bedrock**（既定: Claude 3 Haiku、Terraform の `agent_bedrock_model_id`）を優先し、ECS タスクロールに **`bedrock:InvokeModel`** を付与する。任意で **OpenAI** のキーを `agent_openai_api_key` 等で **Secrets Manager** 経由にできる。コンテナビルド用に **`game/backend/Dockerfile`** と **`Agent/Dockerfile`** があります。手順・変数の詳細は **`infra/terraform/README.md`** を参照してください。
+
 ## テスト
 
 | コマンド | 内容 |
@@ -87,7 +91,8 @@
 - **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
 - **Go + Gin** — `game/backend` の REST API（`POST /api/v1/rooms/resolve` で `preferredRoomId` が空なら**待機中の部屋を検索して割り当て、なければ新規作成**。`excludeRoomId` を付けると（自動検索時）その ID の待機ルームはスキップし、**ゲーム終了後の再参加で直前の部屋に戻らない**ようにできる。特定の部屋を指定した場合はその部屋が待機・カウントダウン中ならその ID、対戦中等なら別の待機可能な部屋 ID を返却。`POST /api/v1/rooms/:roomID/players` で参加、退出、スナップショット）
 - **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに `neckYaw` / `neckPitch`（手トラッキング由来の首）と待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含める。リモート側の首姿勢はローカルと同じ **`Euler` 順 `ZXY`（`composeNeckDeltaQuaternion`）**で頭ボーンに適用する（`YXZ` で組むと首だけ大きく崩れるため統一が必要）。対戦中は `gateway.go` が `WANIAR_HINT_INTERVAL_SEC`（既定 **15 秒**）ごとに Agent ヒントを `hint` で配信。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う。**敵ワニ抽選**は `startGame` で WebSocket 接続中のユニーク `playerId` から **`crypto/rand` で一様に 1 人**を選ぶ（`game/backend/README.md` 参照）
-- **Agent Server (Go + OpenAI gpt-4o-mini)** — `Agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
+- **Agent Server (Go + Amazon Bedrock / 任意 OpenAI)** — `Agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、**Bedrock（既定: Claude 3 Haiku 等）** または任意で OpenAI で自然言語ヒントを生成して返す。API 障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
+- **AWS（`infra/terraform` 雛形）** — **Terraform** で VPC・**ECR**・**ECS Fargate**・**ALB**（game-backend / Agent 別）、フロントは **S3（プライベート）+ CloudFront（OAC）**、Agent は **Bedrock InvokeModel**（タスクロール）と任意の **OpenAI**（**Secrets Manager**・実行ロール `GetSecretValue`）
 - **表示名・投票UI** — 参加時に `displayName` を REST / WebSocket クエリで送信し、`PlayerState` に保存。**他プレイヤー**の頭上名のみ **CSS2DRenderer**（`name-labels.ts`、**自キャラには名前ラベルを付けない**）。スナップショット適用をリモート生成より先に行い、空名は `resolveDisplayName` で補完。ラベル層は **z-index** で WebGL キャンバスより手前（iOS で隠れないよう明示）。**プレイ中に後から入室したプレイヤー**は REST の部屋メンバーには載るが、`game_start` 時点の WebSocket 接続者だけを `GameState.roundPlayerIds` に記録し、**投票対象・投票者数・敵抽選・Agent ヒントの対象プレイヤー**はこのラウンド参加者に限定する（`gateway.go` / `room_usecase.go`）。**プレイヤー識別色**は `entity/player_state.go` の高彩度 `PlayerColors`（**青系はワニ本体と区別しづらいため含めない**）を割り当て、`character.ts` の `BODY_TINT_MAP_BLEND` / `BODY_TINT_SOLID_BLEND` と emissive でワニに乗せる（PBR に加え Lambert/Phong も対象。口内メッシュの色スキップはピンク系に限定し体表の誤判定を防ぐ）。`network.ts` の `applyLocalPlayerColorTint` で割当 hex が更新されたとき体へ再適用する。待機 UI のドット色と同じ hex を `name-labels.ts` の CSS2D ラベル枠（`applyPlayerLabelAccent`）にも用い、体色と表示を揃える。`vote_result` WebSocket には `entity.VoteResult` として `enemyColor`（`TallyVotes` がスナップショットから取得）を含め、**結果画面**でも投票カードと同じ `mountVotePreviews` で敵ワニのオフスクリーン画像を表示する（`screens.ts` の `showResults`）。投票カードは iOS 等での複数 WebGL コンテキスト不具合を避けるため、**単一の `WebGLRenderer` で各プレイヤー分を順にオフスクリーン描画し JPEG 化**（`vote-previews.ts`、体揺れは付けず静止サムネ）。プレビュー専用に **PMREMGenerator + RoomEnvironment** で `scene.environment` を生成し PBR を明るく表示、カメラは狭い FOV・近い距離で枠内を大きく取る。モデル未読込時は色＋絵文字フォールバック
 - **行動テーマシステム** — ゲーム開始時に市民チームと敵ワニにそれぞれ異なる「行動ミッション（テーマ）」をランダム割り当て（`usecase/themes.go`）。例:「障害物の近くを移動する」「マップの外周を歩き回る」等。各プレイヤーには自分のテーマのみ表示され、陣営は直接通知されない。プレイヤーはテーマに沿って行動しつつ、**異なる動きをしている敵ワニ**を探す。テーマは `game_start` WebSocket メッセージで各クライアントに送信、`GameState` に `AllyTheme`/`EnemyTheme` として保存される
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、**市民テーマと敵テーマの両方**を受け取り、敵の行動がテーマと合わないことを示唆するヒントを生成。ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与。フロントは `screens.ts` の `showHint` が Web Animations API で、**行動テーマバッジ直下**（`#agent-hint-danmaku`）へ**弾幕風の横スクロール**で表示（従来の画面中央ポップアップは廃止）
@@ -228,12 +233,13 @@ WaniAR/
 │   ├── scripts/
 │   │   └── build-wani-game-model.mjs  ← モデル生成パイプライン
 │   └── Meshy_AI_…_fbx/       ← 参考用 FBX + テクスチャ
-├── Agent/                     ← AIヒント生成マイクロサービス（Go + OpenAI）
+├── Agent/                     ← AIヒント生成マイクロサービス（Go + Bedrock / 任意 OpenAI）
 │   ├── cmd/server/main.go     ← エントリポイント
 │   ├── internal/
 │   │   ├── config/            ← .env 読み込み・設定管理
 │   │   ├── domain/            ← リクエスト/レスポンス型定義
-│   │   ├── infrastructure/openai/ ← OpenAI APIクライアント
+│   │   ├── infrastructure/bedrock/ ← Amazon Bedrock
+│   │   ├── infrastructure/openai/ ← 任意: OpenAI
 │   │   ├── interface/http/    ← HTTPハンドラ (POST /hint)
 │   │   └── usecase/           ← プロンプト構築・ヒント生成ロジック
 │   └── .env                   ← OPENAI_API_KEY

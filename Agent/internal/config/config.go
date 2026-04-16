@@ -5,16 +5,23 @@ import (
 	"strings"
 )
 
+// DefaultBedrockModel はコスト重視の既定（Claude 3 Haiku）。
+const DefaultBedrockModel = "anthropic.claude-3-haiku-20240307-v1:0"
+
 type Config struct {
-	OpenAIKey string
-	Port      string
+	OpenAIKey      string
+	Port           string
+	AWSRegion      string
+	BedrockModelID string
 }
 
 func Load() Config {
 	loadDotEnv()
 	c := Config{
-		OpenAIKey: os.Getenv("OPENAI_API_KEY"),
-		Port:      os.Getenv("AGENT_PORT"),
+		OpenAIKey:      os.Getenv("OPENAI_API_KEY"),
+		Port:           os.Getenv("AGENT_PORT"),
+		AWSRegion:      os.Getenv("AWS_REGION"),
+		BedrockModelID: strings.TrimSpace(os.Getenv("BEDROCK_MODEL_ID")),
 	}
 	if c.Port == "" {
 		c.Port = "8091"
