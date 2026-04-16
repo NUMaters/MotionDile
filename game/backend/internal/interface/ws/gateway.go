@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
+	"waniar/game-backend/internal/config"
 	"waniar/game-backend/internal/domain/entity"
 	"waniar/game-backend/internal/usecase"
 )
@@ -28,13 +29,6 @@ const (
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 2048
 
-	minPlayersToCountdown = 3
-	maxPlayersToStart     = 10
-	countdownDuration     = 20 * time.Second
-	gameDuration          = 60 * time.Second
-	hintInterval          = 15 * time.Second
-	voteDuration          = 20 * time.Second
-	resultDuration        = 10 * time.Second
 )
 
 type gatewayMessage struct {
@@ -94,6 +88,7 @@ type roomGameCtx struct {
 type Gateway struct {
 	upgrader websocket.Upgrader
 	usecase  *usecase.RoomUsecase
+	rules    config.Rules
 
 	mu    sync.RWMutex
 	rooms map[string]map[*Client]struct{}
@@ -105,7 +100,7 @@ type Gateway struct {
 	landmarks   map[string][]usecase.LandmarkInfo
 }
 
-func NewGateway(uc *usecase.RoomUsecase) *Gateway {
+func NewGateway(uc *usecase.RoomUsecase, rules config.Rules) *Gateway {
 	return &Gateway{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -113,6 +108,7 @@ func NewGateway(uc *usecase.RoomUsecase) *Gateway {
 			CheckOrigin:     buildCheckOrigin(),
 		},
 		usecase:   uc,
+		rules:     rules,
 		rooms:     make(map[string]map[*Client]struct{}),
 		gameCtxs:  make(map[string]*roomGameCtx),
 		landmarks: make(map[string][]usecase.LandmarkInfo),
@@ -387,6 +383,7 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 			"color":       p.Color,
 		})
 	}
+	r := g.rules
 	return map[string]interface{}{
 		"phase":        gs.Phase,
 		"playerCount":  gs.PlayerCount,
@@ -395,6 +392,15 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 		"voteEnd":      gs.VoteEnd,
 		"hintCount":    gs.HintCount,
 		"players":      playerList,
+		"rules": map[string]interface{}{
+			"maxPlayers":        r.MaxPlayers,
+			"minPlayers":        r.MinPlayers,
+			"gameDurationSec":   int(r.GameDuration / time.Second),
+			"matchCountdownSec": int(r.MatchCountdown / time.Second),
+			"voteDurationSec":   int(r.VoteDuration / time.Second),
+			"hintIntervalSec":   int(r.HintInterval / time.Second),
+			"resultDurationSec": int(r.ResultDuration / time.Second),
+		},
 	}
 }
 
@@ -414,23 +420,23 @@ func (g *Gateway) checkGameTransition(roomID string) {
 
 	switch gs.Phase {
 	case entity.PhaseWaiting, "":
-		if count >= maxPlayersToStart {
+		if count >= g.rules.MaxPlayers {
 			g.startGame(roomID)
 			return
 		}
-		if count >= minPlayersToCountdown {
+		if count >= g.rules.MinPlayers {
 			g.startCountdown(roomID)
 			return
 		}
 		_ = g.usecase.SetGameState(context.Background(), roomID, gs)
 		g.broadcastGameState(roomID, gs)
 	case entity.PhaseCountdown:
-		if count >= maxPlayersToStart {
+		if count >= g.rules.MaxPlayers {
 			g.cancelGameTimer(roomID)
 			g.startGame(roomID)
 			return
 		}
-		if count < minPlayersToCountdown {
+		if count < g.rules.MinPlayers {
 			g.cancelGameTimer(roomID)
 			gs.Phase = entity.PhaseWaiting
 			gs.CountdownEnd = 0
@@ -463,9 +469,10 @@ func (g *Gateway) startCountdown(roomID string) {
 	g.gameMu.Unlock()
 
 	now := time.Now()
+	cd := g.rules.MatchCountdown
 	gs := entity.GameState{
 		Phase:        entity.PhaseCountdown,
-		CountdownEnd: now.Add(countdownDuration).UnixMilli(),
+		CountdownEnd: now.Add(cd).UnixMilli(),
 		PlayerCount:  g.roomClientCount(roomID),
 	}
 	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
@@ -473,7 +480,7 @@ func (g *Gateway) startCountdown(roomID string) {
 
 	go func() {
 		select {
-		case <-time.After(countdownDuration):
+		case <-time.After(cd):
 			g.gameMu.Lock()
 			delete(g.gameCtxs, roomID)
 			g.gameMu.Unlock()
@@ -509,13 +516,14 @@ func (g *Gateway) startGame(roomID string) {
 	allyTheme, enemyTheme := usecase.PickThemes()
 
 	now := time.Now()
+	gd := g.rules.GameDuration
 	gs := entity.GameState{
 		Phase:          entity.PhasePlaying,
 		EnemyPlayerID:  enemyID,
 		RoundPlayerIDs: roundPlayerIDs,
 		AllyTheme:      allyTheme,
 		EnemyTheme:     enemyTheme,
-		GameEnd:        now.Add(gameDuration).UnixMilli(),
+		GameEnd:        now.Add(gd).UnixMilli(),
 		PlayerCount:    g.roomClientCount(roomID),
 		Votes:          make(map[string]string),
 	}
@@ -551,8 +559,8 @@ func (g *Gateway) startGame(roomID string) {
 }
 
 func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
-	hintTicker := time.NewTicker(hintInterval)
-	gameTimer := time.NewTimer(gameDuration)
+	hintTicker := time.NewTicker(g.rules.HintInterval)
+	gameTimer := time.NewTimer(g.rules.GameDuration)
 	defer hintTicker.Stop()
 	defer gameTimer.Stop()
 
@@ -584,8 +592,9 @@ func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
 func (g *Gateway) startVoting(roomID string) {
 	gs, _ := g.usecase.GetGameState(context.Background(), roomID)
 	now := time.Now()
+	vd := g.rules.VoteDuration
 	gs.Phase = entity.PhaseVoting
-	gs.VoteEnd = now.Add(voteDuration).UnixMilli()
+	gs.VoteEnd = now.Add(vd).UnixMilli()
 	gs.Votes = make(map[string]string)
 	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
 
@@ -623,7 +632,7 @@ func (g *Gateway) startVoting(roomID string) {
 
 	go func() {
 		select {
-		case <-time.After(voteDuration):
+		case <-time.After(vd):
 			g.gameMu.Lock()
 			delete(g.gameCtxs, roomID)
 			g.gameMu.Unlock()
@@ -651,7 +660,7 @@ func (g *Gateway) finishVoting(roomID string) {
 	})
 
 	go func() {
-		time.Sleep(resultDuration)
+		time.Sleep(g.rules.ResultDuration)
 		g.resetGame(roomID)
 	}()
 }

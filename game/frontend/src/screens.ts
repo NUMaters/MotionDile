@@ -1,6 +1,7 @@
 import type { AnimationClip, Group } from 'three';
 import { getEl } from './utils';
 import { FLAT_WORLD_MODE, FALLBACK_PLAYER_COLOR } from './config';
+import { getGameRules } from './game-rules';
 import { mountVotePreviews, disposeVotePreviews } from './vote-previews';
 import { resolveDisplayName } from './player-names';
 import { IC } from './icons';
@@ -94,81 +95,185 @@ function advanceTutorialPage(): void {
   tutPage = (tutPage + 1) % tutorialPagesHtml.length;
 }
 
-function renderHomeTutorialInline(): void {
+function tutorialPrefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function dotRowHtml(): string {
+  return tutorialPagesHtml
+    .map((_, i) => `<div class="tut-dot${i === tutPage ? ' active' : ''}"></div>`)
+    .join('');
+}
+
+function syncStandaloneTutorialDots(): void {
+  const tutDotsEl = document.getElementById('tut-dots');
+  if (tutDotsEl) tutDotsEl.innerHTML = dotRowHtml();
+  const homeDots = document.querySelector('#home-tut-inline .home-tut-dots');
+  if (homeDots) homeDots.innerHTML = dotRowHtml();
+}
+
+function playSlideEnter(inner: HTMLElement | null): void {
+  if (!inner || tutorialPrefersReducedMotion()) return;
+  inner.classList.remove('tut-enter-run', 'tut-enter-initial', 'tut-slide-out');
+  inner.classList.add('tut-enter-initial');
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      inner.classList.remove('tut-enter-initial');
+      inner.classList.add('tut-enter-run');
+    });
+  });
+}
+
+function renderHomeTutorialInline(enterAfterMount: boolean): void {
   const el = document.getElementById('home-tut-inline');
   if (!el) return;
   const html = tutorialPagesHtml[tutPage] ?? '';
   const n = tutorialPagesHtml.length;
-  const dots = tutorialPagesHtml
-    .map((_, i) => `<div class="tut-dot${i === tutPage ? ' active' : ''}"></div>`)
-    .join('');
+  const dots = dotRowHtml();
   el.innerHTML = `
     <div class="home-tut-tap-area tut-panel home-tut-panel" role="button" tabindex="0" aria-label="遊び方 ${tutPage + 1} / ${n}。タップで次のページへ">
-      <div class="tut-page-inner">${html}</div>
+      <div class="home-tut-slide-viewport">
+        <div class="tut-page-inner">${html}</div>
+      </div>
       <div class="home-tut-footer">
         <div class="tut-dots home-tut-dots">${dots}</div>
         <p class="home-tut-hint">タップで次へ</p>
       </div>
     </div>`;
+  if (enterAfterMount) {
+    playSlideEnter(el.querySelector('.tut-page-inner'));
+  }
+}
+
+function renderTutorialPanelContent(enterAfterMount: boolean): void {
+  const contentEl = getEl<HTMLElement>('tut-content');
+  const pageHtml = tutorialPagesHtml[tutPage] ?? '';
+  contentEl.innerHTML = `<div class="tut-panel tut-panel--slide"><div class="tut-slide-viewport-full"><div class="tut-page-inner">${pageHtml}</div></div></div>`;
+  if (enterAfterMount) {
+    playSlideEnter(contentEl.querySelector('.tut-page-inner'));
+  }
+}
+
+function renderAllTutorialViews(enterHome: boolean, enterTutorial: boolean): void {
+  renderHomeTutorialInline(enterHome);
+  renderTutorialPanelContent(enterTutorial);
+  syncStandaloneTutorialDots();
+}
+
+function runHomeTutorialSlideAdvance(): void {
+  if (tutorialPrefersReducedMotion()) {
+    advanceTutorialPage();
+    renderAllTutorialViews(false, false);
+    return;
+  }
+  const inner = document.querySelector('#home-tut-inline .tut-page-inner') as HTMLElement | null;
+  if (!inner) {
+    advanceTutorialPage();
+    renderAllTutorialViews(false, false);
+    return;
+  }
+  inner.classList.remove('tut-enter-run', 'tut-enter-initial');
+  let done = false;
+  const finish = (): void => {
+    if (done) return;
+    done = true;
+    advanceTutorialPage();
+    renderAllTutorialViews(true, false);
+  };
+  inner.classList.add('tut-slide-out');
+  inner.addEventListener(
+    'transitionend',
+    (ev) => {
+      if (ev.target !== inner) return;
+      finish();
+    },
+    { once: true },
+  );
+}
+
+function runFullTutorialSlideAdvance(): void {
+  if (tutorialPrefersReducedMotion()) {
+    advanceTutorialPage();
+    renderAllTutorialViews(false, false);
+    return;
+  }
+  const inner = document.querySelector('#tut-content .tut-page-inner') as HTMLElement | null;
+  if (!inner) {
+    advanceTutorialPage();
+    renderAllTutorialViews(false, false);
+    return;
+  }
+  inner.classList.remove('tut-enter-run', 'tut-enter-initial');
+  let done = false;
+  const finish = (): void => {
+    if (done) return;
+    done = true;
+    advanceTutorialPage();
+    renderAllTutorialViews(false, true);
+  };
+  inner.classList.add('tut-slide-out');
+  inner.addEventListener(
+    'transitionend',
+    (ev) => {
+      if (ev.target !== inner) return;
+      finish();
+    },
+    { once: true },
+  );
 }
 
 export function initTutorial(): void {
-  const contentEl = getEl<HTMLElement>('tut-content');
-  const dotsEl = getEl<HTMLElement>('tut-dots');
   const tutScreen = getEl<HTMLElement>('screen-tutorial');
   const homeTutEl = document.getElementById('home-tut-inline');
-
-  function render() {
-    const pageHtml = tutorialPagesHtml[tutPage] ?? '';
-    contentEl.innerHTML = `<div class="tut-panel"><div class="tut-page-inner">${pageHtml}</div></div>`;
-    dotsEl.innerHTML = tutorialPagesHtml
-      .map((_, i) => `<div class="tut-dot${i === tutPage ? ' active' : ''}"></div>`)
-      .join('');
-    renderHomeTutorialInline();
-  }
 
   tutScreen.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     if (target.id === 'btn-tut-back' || target.closest('#btn-tut-back')) return;
-    advanceTutorialPage();
-    render();
+    runFullTutorialSlideAdvance();
   });
 
   getEl<HTMLElement>('btn-tut-back').addEventListener('click', (e) => {
     e.stopPropagation();
     tutPage = 0;
     showScreen('home');
-    render();
+    renderAllTutorialViews(false, false);
   });
 
   if (homeTutEl) {
     homeTutEl.addEventListener('click', () => {
-      advanceTutorialPage();
-      render();
+      runHomeTutorialSlideAdvance();
     });
   }
 
-  render();
+  renderAllTutorialViews(false, false);
 }
 
 // ─── Matchmaking ───
 let matchCountdownInterval: number | null = null;
 let matchmakingPip = false;
+/** `updateMatchmaking` 直近の `countdownEnd`（PiP トグル時に待機文を同期するため） */
+let lastMatchmakingCountdownEnd: number | null = null;
 
 /** 待機画面を PiP 風に縮小（背景透過・ゲーム操作可能） */
 export function setMatchmakingPipMode(pip: boolean): void {
   const root = document.getElementById('screen-matchmaking');
   const btn = document.getElementById('btn-matchmaking-pip') as HTMLButtonElement | null;
-  const label = document.getElementById('label-matchmaking-pip');
   const iconSlot = document.getElementById('icon-matchmaking-pip');
   if (!root) return;
   matchmakingPip = pip;
   root.classList.toggle('matchmaking-pip', pip);
+  if (!lastMatchmakingCountdownEnd) {
+    const cdEl = document.getElementById('match-countdown');
+    if (cdEl) cdEl.textContent = pip ? '' : `${getGameRules().minPlayers}人以上で開始カウントダウン`;
+  }
   if (btn) {
     btn.setAttribute('aria-pressed', pip ? 'true' : 'false');
     btn.title = pip ? '待機パネルを拡大' : '待機パネルを縮小してワールドを操作';
+    btn.setAttribute(
+      'aria-label',
+      pip ? '待機パネルを拡大して全画面表示' : '待機パネルを縮小してワールドを操作',
+    );
   }
-  if (label) label.textContent = pip ? '拡大表示' : '縮小表示';
   if (iconSlot) iconSlot.innerHTML = pip ? IC.maximize(18) : IC.pip(18);
 }
 
@@ -183,10 +288,16 @@ export function initMatchmakingPip(): void {
 }
 
 export function updateMatchmaking(playerCount: number, countdownEnd: number | null): void {
+  lastMatchmakingCountdownEnd = countdownEnd;
+  const maxP = getGameRules().maxPlayers;
+  const minP = getGameRules().minPlayers;
+  const countText = `${playerCount} / ${maxP}`;
   const countEl = document.getElementById('match-count');
+  const countPipEl = document.getElementById('match-count-pip');
   const cdEl = document.getElementById('match-countdown');
   const homeBtn = document.getElementById('btn-matchmaking-home') as HTMLButtonElement | null;
-  if (countEl) countEl.textContent = `${playerCount} / 10`;
+  if (countEl) countEl.textContent = countText;
+  if (countPipEl) countPipEl.textContent = countText;
 
   if (matchCountdownInterval != null) {
     window.clearInterval(matchCountdownInterval);
@@ -198,7 +309,8 @@ export function updateMatchmaking(playerCount: number, countdownEnd: number | nu
       const remaining = Math.max(0, Math.ceil((countdownEnd - Date.now()) / 1000));
       cdEl.textContent = remaining > 0 ? `開始まで ${remaining}秒` : '開始中...';
       if (homeBtn) {
-        const locked = remaining > 0 && remaining <= 10;
+        const lockLastSec = Math.min(10, getGameRules().matchCountdownSec);
+        const locked = remaining > 0 && remaining <= lockLastSec;
         homeBtn.disabled = locked;
         homeBtn.style.opacity = locked ? '0.3' : '';
         homeBtn.style.pointerEvents = locked ? 'none' : '';
@@ -209,7 +321,7 @@ export function updateMatchmaking(playerCount: number, countdownEnd: number | nu
       }
     }, 200);
   } else if (cdEl) {
-    cdEl.textContent = '3人以上で開始カウントダウン';
+    cdEl.textContent = matchmakingPip ? '' : `${minP}人以上で開始カウントダウン`;
     if (homeBtn) {
       homeBtn.disabled = false;
       homeBtn.style.opacity = '';
@@ -407,14 +519,25 @@ export function showResults(
   role: string,
   enemyColor?: string,
   preview?: { template: Group; clips: AnimationClip[] } | null,
+  allyTheme?: string,
+  enemyTheme?: string,
 ): void {
   disposeVotePreviews();
+
+  const resultsRoot = document.getElementById('screen-results');
+  resultsRoot?.classList.remove('results-revealed');
+
   showScreen('results');
 
   const titleEl = document.getElementById('result-title');
+  const allyThemeEl = document.getElementById('result-theme-ally');
+  const enemyThemeEl = document.getElementById('result-theme-enemy');
   const enemyEl = document.getElementById('result-enemy');
   const detailEl = document.getElementById('result-detail');
   const previewMount = document.getElementById('result-enemy-preview-mount');
+
+  const allyText = (allyTheme ?? '').trim() || '（記録なし）';
+  const enemyText = (enemyTheme ?? '').trim() || '（記録なし）';
 
   const youWin =
     (citizensWin && role === 'citizen') || (!citizensWin && role === 'enemy');
@@ -423,20 +546,39 @@ export function showResults(
     titleEl.innerHTML = youWin
       ? `${IC.trophy(28)} 勝利！`
       : `${IC.skull(28)} 敗北...`;
-    titleEl.className = `result-title ${youWin ? 'result-win' : 'result-lose'}`;
+    titleEl.className = `result-title result-anim ${youWin ? 'result-win' : 'result-lose'}`;
+  }
+
+  if (allyThemeEl) {
+    allyThemeEl.textContent = allyText;
+  }
+  if (enemyThemeEl) {
+    enemyThemeEl.textContent = enemyText;
   }
 
   if (enemyEl) {
-    enemyEl.textContent = `敵ワニは「${resolveDisplayName(enemyPlayerId)}」でした`;
+    const en = escapeHtml(resolveDisplayName(enemyPlayerId));
+    enemyEl.innerHTML = `敵ワニは「<span class="result-reveal-enemy-name">${en}</span>」でした`;
   }
 
   if (detailEl) {
-    const lines = Object.entries(voteCounts)
+    const outcomeClass = citizensWin ? 'result-outcome result-outcome--citizens' : 'result-outcome result-outcome--enemy';
+    const outcomeLabel = citizensWin ? '市民チームの勝利' : '敵ワニの勝利';
+    const rows = Object.entries(voteCounts)
       .sort((a, b) => b[1] - a[1])
-      .map(([pid, count]) =>
-        `${resolveDisplayName(pid)}: ${count}票${pid === enemyPlayerId ? ' ← 敵ワニ' : ''}`)
-      .join('\n');
-    detailEl.innerHTML = `<strong>${citizensWin ? '市民チームの勝利！' : '敵ワニの勝利！'}</strong><br><br>${lines.replace(/\n/g, '<br>')}`;
+      .map(([pid, count]) => {
+        const isEnemy = pid === enemyPlayerId;
+        const name = escapeHtml(resolveDisplayName(pid));
+        const nameClass = isEnemy ? 'result-vote-name result-vote-name--enemy' : 'result-vote-name result-vote-name--ally';
+        const tagClass = isEnemy ? 'result-vote-tag result-vote-tag--enemy' : 'result-vote-tag result-vote-tag--ally';
+        const tagLabel = isEnemy ? '敵' : '市民';
+        return `<li class="result-vote-row"><span class="${tagClass}">${tagLabel}</span><span class="${nameClass}">${name}</span><span class="result-vote-count">${count}票</span></li>`;
+      })
+      .join('');
+    detailEl.innerHTML = `
+      <div class="${outcomeClass}">${outcomeLabel}</div>
+      <p class="result-vote-heading">得票数</p>
+      <ul class="result-vote-list">${rows}</ul>`;
   }
 
   const col = enemyColor?.trim() || FALLBACK_PLAYER_COLOR;
@@ -447,6 +589,13 @@ export function showResults(
       previewMount.innerHTML = `<div class="vote-preview-fallback" style="background:${col}">🐊</div>`;
     }
   }
+
+  void resultsRoot?.offsetWidth;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      resultsRoot?.classList.add('results-revealed');
+    });
+  });
 }
 
 export function getPlayerRole(): string {

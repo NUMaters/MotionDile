@@ -31,3 +31,8 @@ export function getJoinDisplayName(): string {
   const n = getStoredPlayerName();
   return n || 'プレイヤー';
 }
+
+/** 単体テスト用：表示名キャッシュを空にする */
+export function resetDisplayNameCacheForTest(): void {
+  displayNameById.clear();
+}

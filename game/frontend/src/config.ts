@@ -25,6 +25,25 @@ export const roomIdFromUrl = new URLSearchParams(location.search).get('room') ??
 /** サーバ未割当時のラベル／投票プレビュー用（青系はワニ本体と区別しづらいためオレンジ系） */
 export const FALLBACK_PLAYER_COLOR = '#FB8C00';
 
+// ─── ゲームルール（既定値。WebSocket の `game_state.rules` で上書き） ─────────
+function vitePositiveInt(key: string, fallback: number): number {
+  const raw = import.meta.env[key] as string | undefined;
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
+/** フロント表示・フォールバック用。バックエンドは `WANIAR_*` 環境変数（`game/backend/internal/config/rules.go`） */
+export const GAME_RULES = {
+  maxPlayers: vitePositiveInt('VITE_WANIAR_MAX_PLAYERS', 10),
+  minPlayers: vitePositiveInt('VITE_WANIAR_MIN_PLAYERS', 3),
+  gameDurationSec: vitePositiveInt('VITE_WANIAR_GAME_DURATION_SEC', 60),
+  matchCountdownSec: vitePositiveInt('VITE_WANIAR_MATCH_COUNTDOWN_SEC', 20),
+  voteDurationSec: vitePositiveInt('VITE_WANIAR_VOTE_DURATION_SEC', 20),
+  hintIntervalSec: vitePositiveInt('VITE_WANIAR_HINT_INTERVAL_SEC', 15),
+  resultDurationSec: vitePositiveInt('VITE_WANIAR_RESULT_DURATION_SEC', 10),
+} as const;
+
 // ─── ワールド座標・スケール ─────────────────────────────────────────────────
 /** デフォルト地面プレーンおよび地形合わせの基準 Y */
 export const GROUND_Y = 0;

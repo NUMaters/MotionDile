@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# CMake 外付けビルド（compile_commands.json もここに出る）
+build/
 .DS_Store
 **/.DS_Store
 # 開発時に modeling からコピーされる（約20MB）。リポジトリには含めない

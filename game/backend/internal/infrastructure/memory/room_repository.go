@@ -8,7 +8,10 @@ import (
 	"sync"
 
 	"waniar/game-backend/internal/domain/entity"
+	"waniar/game-backend/internal/domain/repository"
 )
+
+var _ repository.RoomRepository = (*RoomRepository)(nil)
 
 type roomState struct {
 	version int64

@@ -17,7 +17,6 @@ import {
   JUMP_HEAD_LEAD_LOCAL_Y, JUMP_HEAD_LEAD_RISE_S, JUMP_HEAD_LEAD_END_S, JUMP_BODY_LIFT_RAMP_S,
   JUMP_ROOT_PITCH_LAUNCH, JUMP_ROOT_ROLL_MAX, JUMP_AIR_MOVE_DECEL_MULT,
   LOOK_RESET_SIZE_PX,
-  LOOK_RESET_LEFT_INSET_PX,
 } from './config';
 import { getEl, clamp, smoothToward } from './utils';
 import { renderer, scene, camera, sun, ground, grid, box, clock } from './scene';
@@ -45,6 +44,7 @@ import {
 import {
   showScreen, initTutorial, updateMatchmaking, initMatchmakingPip,
 } from './screens';
+import { resetGameRulesFromConfig } from './game-rules';
 import { getStoredPlayerName, saveStoredPlayerName } from './player-names';
 import { IC } from './icons';
 import { initLabelRenderer, renderLabels } from './name-labels';
@@ -100,13 +100,24 @@ const lookResetBtn = getEl<HTMLButtonElement>('look-reset-btn');
 function positionLookResetButton(): void {
   lookResetBtn.style.width = `${LOOK_RESET_SIZE_PX}px`;
   lookResetBtn.style.height = `${LOOK_RESET_SIZE_PX}px`;
-  lookResetBtn.style.left = `max(${LOOK_RESET_LEFT_INSET_PX}px, env(safe-area-inset-left, 0px))`;
-  lookResetBtn.style.top = '50%';
-  lookResetBtn.style.transform = 'translateY(-50%)';
-  lookResetBtn.style.bottom = 'auto';
 }
 positionLookResetButton();
 window.addEventListener('resize', positionLookResetButton);
+
+const compassEl = document.getElementById('game-compass');
+const compassNeedle = compassEl?.querySelector('.compass-needle') as SVGGElement | null;
+
+function updateCompass(): void {
+  if (!model || !compassEl) return;
+  const screen = (window as unknown as { __currentScreen?: string }).__currentScreen;
+  if (screen === 'game-hud') {
+    compassEl.classList.remove('hidden');
+    const deg = -(model.rotation.y * 180) / Math.PI;
+    if (compassNeedle) compassNeedle.style.transform = `rotate(${deg}deg)`;
+  } else {
+    compassEl.classList.add('hidden');
+  }
+}
 lookResetBtn.addEventListener('pointerdown', (e) => {
   e.stopPropagation();
   recenterDeviceLook();
@@ -592,6 +603,8 @@ async function loadModel() {
 // ─── Bootstrap ───
 initTutorial();
 initMatchmakingPip();
+resetGameRulesFromConfig();
+updateMatchmaking(0, null);
 
 // Lucide アイコンを動的に挿入（HTML上の placeholder span）
 const matchIcon = document.getElementById('match-icon');
@@ -677,6 +690,7 @@ function loop(timestamp: number) {
 
   updateRemotePlayers(dt);
   updateCamera();
+  updateCompass();
   renderer.render(scene, camera);
   renderLabels(scene, camera);
 }

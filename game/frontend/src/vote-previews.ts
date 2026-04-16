@@ -7,6 +7,9 @@ import { renderer as mainRenderer } from './scene';
 import { WANI_SCALE, FALLBACK_PLAYER_COLOR } from './config';
 
 const tmpV = new THREE.Vector3();
+const tmpV2 = new THREE.Vector3();
+const tmpV3 = new THREE.Vector3();
+const lookAtPt = new THREE.Vector3();
 const tmpSphere = new THREE.Sphere();
 
 /** PBR が環境光無しで真っ黒に近くなるのを防ぐ（プレビュー用） */
@@ -51,7 +54,7 @@ export function mountVotePreviews(
   disposeVotePreviews();
   if (!mounts.length || !clips.length) return;
 
-  const size = 256;
+  const size = 336;
 
   const savedSize = mainRenderer.getSize(new THREE.Vector2());
   const savedPixelRatio = mainRenderer.getPixelRatio();
@@ -67,7 +70,6 @@ export function mountVotePreviews(
   });
 
   mainRenderer.setPixelRatio(1);
-  /** プレビュー専用: ACES は中間調が潰れやすいので Reinhard + 露出を上げる */
   mainRenderer.toneMapping = THREE.ACESFilmicToneMapping;
   mainRenderer.toneMappingExposure = 1.35;
   mainRenderer.shadowMap.enabled = false;
@@ -93,7 +95,6 @@ export function mountVotePreviews(
       previewScene.background = new THREE.Color(0xa8d4ec);
       previewScene.environment = envMap;
 
-      /** IBL + 補助ライト（投票カード用サムネは近接・明るめ） */
       previewScene.add(new THREE.AmbientLight(0xffffff, 0.55));
       const hemi = new THREE.HemisphereLight(0xfff5e8, 0x8899bb, 0.85);
       previewScene.add(hemi);
@@ -146,26 +147,34 @@ export function mountVotePreviews(
 
       const bWorld = new THREE.Box3().setFromObject(pivot);
       bWorld.getBoundingSphere(tmpSphere);
-      const center = tmpSphere.center;
       const sphereRad = Math.max(tmpSphere.radius, 0.08);
+      /** AABB 中心（非対称メッシュで境界球より見た目の重心に近い） */
+      bWorld.getCenter(tmpV);
       const size3 = bWorld.getSize(new THREE.Vector3());
       const maxDim = Math.max(size3.x, size3.y, size3.z, sphereRad * 2);
 
       const fov = 24;
       const vRad = (fov * Math.PI) / 180;
-      /** 枠いっぱいに寄せる（以前は margin が大きくモデルが豆粒に見えていた） */
-      const margin = 0.32;
+      const margin = 0.27;
       const fitRadius = Math.max(sphereRad, maxDim * 0.42);
       const dist = fitRadius / Math.tan(vRad / 2) * margin;
 
-      /** 視線: やや上から・斜め前（ワニの正面が見える向き） */
-      const eye = new THREE.Vector3(0.72, 0.38, 1).normalize();
+      const eyeDir = new THREE.Vector3(0.72, 0.38, 1).normalize();
       const camera = new THREE.PerspectiveCamera(fov, 1, 0.02, dist * 8);
-      camera.position.copy(center).add(eye.multiplyScalar(dist));
+      camera.position.copy(tmpV).addScaledVector(eyeDir, dist);
       camera.up.set(0, 1, 0);
-      camera.lookAt(center);
+      /**
+       * 斜め視点＋非対称シルエットで境界中心が画角左に寄りがちなため、
+       * 注視点をカメラ右（forward × up）方向へ微調整して枠内中央に寄せる。
+       */
+      tmpV2.subVectors(tmpV, camera.position).normalize();
+      tmpV3.crossVectors(tmpV2, camera.up).normalize();
+      /** 正の tmpV3 はカメラ右：注視をその方向へずらすと被写体は画角左へ寄るためマイナスで中央補正 */
+      const lateralNudge = 0.026 * Math.min(1.35, sphereRad / 0.42);
+      lookAtPt.copy(tmpV).addScaledVector(tmpV3, -lateralNudge);
+      camera.lookAt(lookAtPt);
 
-      bounce.position.copy(center).add(new THREE.Vector3(0.4, 0.5, 0.6));
+      bounce.position.copy(tmpV).add(new THREE.Vector3(0.4, 0.5, 0.6));
 
       mainRenderer.setRenderTarget(renderTarget);
       mainRenderer.setClearColor(0xa8d4ec, 1);
