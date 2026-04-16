@@ -77,6 +77,9 @@ func TestBuildHintEvidence_CollectsExpectedFacts(t *testing.T) {
 	if !ev.Enemy.Environment.NearWall {
 		t.Fatal("expected near wall to be true")
 	}
+	if !ev.Enemy.Environment.NearShore {
+		t.Fatal("expected near shore to be true")
+	}
 	if ev.Enemy.Environment.NearbyLandmark.Kind != LandmarkRock {
 		t.Fatalf("expected nearby rock, got %s", ev.Enemy.Environment.NearbyLandmark.Kind)
 	}

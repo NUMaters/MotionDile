@@ -28,7 +28,6 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 2048
-
 )
 
 type gatewayMessage struct {
@@ -513,7 +512,11 @@ func (g *Gateway) startGame(roomID string) {
 	}
 	enemyID := roundPlayerIDs[idx]
 
-	allyTheme, enemyTheme := usecase.PickThemes()
+	allyTheme, enemyTheme, err := g.usecase.GenerateThemes(context.Background(), roomID, len(roundPlayerIDs))
+	if err != nil {
+		log.Printf("[ws] theme generation error for room %s: %v", roomID, err)
+		return
+	}
 
 	now := time.Now()
 	gd := g.rules.GameDuration
