@@ -65,10 +65,10 @@
 
 **ゲーム参加**ボタンの `click` と同じユーザージェスチャー内で、iOS 向けに **DeviceMotion / DeviceOrientation** の `requestPermission`（`device-look.ts` で同一ターンに `void` 呼び出しの直後に `deviceorientation` / `devicemotion` を購読）とカメラ・手認識の開始をまとめて行うため、**追加タップなしでモーション許可ダイアログが出ます**（カメラ許可とは別のシステムダイアログが出る場合があります）。カメラだけ失敗したときは HUD の案内どおり**画面をタップして再試行**できます。視点は `device-look.ts`（`alpha` なし時は `beta`/`gamma` と `DEVICE_LOOK_TILT_GAIN`）。
 
-- **口の開閉**: 手の**開き具合**を口の開きに対応（`hand-control-model.json` の **`version`** により計算式が異なる。**v2（推奨・デフォルト）**: 各指の「手首〜指先 / 手首〜MCP」の平均比でパー／グーを判別。**v1（学習済みの従来 JSON）**: 指先〜MCP 距離のカール指標を維持）
-- **首の向き（左右・上下）**: **v2** では**掌の法線**（中指先方向と手の横幅から）でヨー・ピッチを安定取得。**v1** では手首〜中指 MCP の傾き。いずれも特徴量に **EMA**（`HAND_FEATURE_EMA_ALPHA`）をかけ、首ボーンは `HEAD_HAND_TRACK_SMOOTH` で追従
+- **口の開閉**: MediaPipe のランドマークから、**中指の付け根〜先**と**親指先**の方向ベクトルのなす角を **閉じ／開き**にマッピングし、**口開き度に EMA**（`HAND_MOUTH_OUTPUT_SMOOTH`）をかけてジッタを抑える（`config.ts` の `HAND_MOUTH_ANGLE_*` で閾値調整）
+- **首の向き（左右・上下）**: **手首→中指先**のベクトルから `asin` でヨー／ピッチを取得。校準待ち（`HAND_CALIBRATION_WAIT_MS`）のあと基準姿勢を記録し、差分にゲイン（`HAND_NECK_*`）を掛ける。軸角度には **EMA**（`HAND_AXIS_SMOOTH_ALPHA`）をかけてから差分計算し、首ボーンは `HEAD_HAND_TRACK_SMOOTH` で追従。**学習用 JSON／分類機は使用しない**
 - カメラ起動後、画面右上にカメラプレビュー＋ランドマーク可視化（**CSS の左右反転は行わず**、映像とランドマークが一致するよう素のストリーム向きで表示）
-- 首・口の制御だけ、正規化ランドマークを **`(x,y) → (1-x, 1-y)`** に写してから特徴量を計算（非ミラー映像でもジェスチャーとワニの向きが対応しやすくなる。`medea-pipeline/collect.html` も同じ処理で学習データと整合）
+- 正規化ランドマークを **`(x,y) → (1-x, 1-y)`** に写してから幾何計算（非ミラー映像でもジェスチャーとワニの向きが対応しやすい）
 - スマートフォンは **外カメラ優先** で起動（失敗時は内カメラへフォールバック）
 - 手が検出されていない間は **PC の `M` キー**で口の開閉を切り替え可能（スマホは手認識またはカメラ未起動時は口は閉じたまま）
 
@@ -80,11 +80,11 @@
 - **@mediapipe/tasks-vision** — MediaPipe Hand Landmarker（ブラウザカメラ＋手認識で口開閉・首の向きを制御）
 - **@gltf-transform/core v4.3** — glTF/GLB ファイルのプログラム的な加工・生成
 - **glTF 2.0 (GLB)** — 3D モデルフォーマット（スキンメッシュ + ボーンアニメーション）
-- **medea-pipeline（独自）** — 手ジェスチャー学習データ収集・パラメータ学習・ゲーム反映
+- **medea-pipeline** — 任意の補助ツール（収集 HTML 等）。ゲーム本体の手制御は **MediaPipe のみ**
 - **Vue 3** — ゲーム UI シェル（単一ファイルコンポーネント `App.vue`）。マウント後に Three.js ゲーム本体（`bootstrapGame.ts`）を動的 import し、DOM（`#game-canvas` 等）は従来どおり ID 参照で操作
 - **試合結果画面** — `#screen-results` は上詰め（`justify-content: flex-start`）と余白の圧縮で縦スクロール量を抑え、`ホームに戻る` は `position: sticky` で下端付近に留めやすくする（`app.css`）。得票行の敵は「敵」タグ＋名前のみ（`screens.ts` の `showResults`、重複ラベル「敵ワニ」は出さない）
-- **TypeScript v5.8** — フロント（`game/frontend/src/*.ts` / `*.vue`）と学習スクリプト（`medea-pipeline/scripts/train-hand-control-model.ts`）の型付け
-- **tsx** — Node 上で TypeScript 学習スクリプトを直接実行（`npm run pipeline:train` / Go バックエンドの `npx tsx` 呼び出し）
+- **TypeScript v5.8** — フロント（`game/frontend/src/*.ts` / `*.vue`）と `medea-pipeline` 配下スクリプトの型付け
+- **tsx** — Node 上で TypeScript を直接実行（`medea-pipeline` の補助スクリプトや Go 連携の `npx tsx` 呼び出し向け）
 - **Go + Gin** — `game/backend` の REST API（`POST /api/v1/rooms/resolve` で `preferredRoomId` が空なら**待機中の部屋を検索して割り当て、なければ新規作成**。`excludeRoomId` を付けると（自動検索時）その ID の待機ルームはスキップし、**ゲーム終了後の再参加で直前の部屋に戻らない**ようにできる。特定の部屋を指定した場合はその部屋が待機・カウントダウン中ならその ID、対戦中等なら別の待機可能な部屋 ID を返却。`POST /api/v1/rooms/:roomID/players` で参加、退出、スナップショット）
 - **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに `neckYaw` / `neckPitch`（手トラッキング由来の首）と待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含める。リモート側の首姿勢はローカルと同じ **`Euler` 順 `ZXY`（`composeNeckDeltaQuaternion`）**で頭ボーンに適用する（`YXZ` で組むと首だけ大きく崩れるため統一が必要）。対戦中は `gateway.go` が `WANIAR_HINT_INTERVAL_SEC`（既定 **15 秒**）ごとに Agent ヒントを `hint` で配信。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う。**敵ワニ抽選**は `startGame` で WebSocket 接続中のユニーク `playerId` から **`crypto/rand` で一様に 1 人**を選ぶ（`game/backend/README.md` 参照）
 - **Agent Server (Go + OpenAI gpt-4o-mini)** — `Agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
@@ -92,10 +92,10 @@
 - **行動テーマシステム** — ゲーム開始時に市民チームと敵ワニにそれぞれ異なる「行動ミッション（テーマ）」をランダム割り当て（`usecase/themes.go`）。例:「障害物の近くを移動する」「マップの外周を歩き回る」等。各プレイヤーには自分のテーマのみ表示され、陣営は直接通知されない。プレイヤーはテーマに沿って行動しつつ、**異なる動きをしている敵ワニ**を探す。テーマは `game_start` WebSocket メッセージで各クライアントに送信、`GameState` に `AllyTheme`/`EnemyTheme` として保存される
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、**市民テーマと敵テーマの両方**を受け取り、敵の行動がテーマと合わないことを示唆するヒントを生成。ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与。フロントは `screens.ts` の `showHint` が Web Animations API で、**行動テーマバッジ直下**（`#agent-hint-danmaku`）へ**弾幕風の横スクロール**で表示（従来の画面中央ポップアップは廃止）
 - **Vite v6.2** — 開発サーバー・ビルドツール（`@vitejs/plugin-vue` で `.vue` を処理し、`.ts` をトランスパイル）
-- **concurrently** — `npm run dev:all` で game backend・Agent・Vite を一括起動（`-k` でいずれか終了時に他プロセスも停止）
+- **dev-all ランナー** — `scripts/dev-all.mjs` が Go ビルド後に game backend・Agent・Vite を起動（いずれか終了時に他プロセスへ `SIGTERM`）
 - **air** — Go バックエンドをホットリロード常駐で起動。`dev:all` の初回待ち時間を減らし、以後の再起動を高速化
 - **serve** — 静的 HTTP サーバー（ビューア配信）
-- **`game/frontend/src/config.ts`** — ゲーム定数の集約。**`GAME_RULES`**（プレイ時間・マッチ開始前カウントダウン・投票・ヒント間隔・結果待ち・最小／最大人数の既定。`VITE_WANIAR_*` で上書き）と **`game-rules.ts`**（`WebSocket` の `game_state.rules` でサーバ値に同期）を参照。バックエンドの対応環境変数は `WANIAR_*`（`game/backend/internal/config/rules.go`）。`FALLBACK_PLAYER_COLOR` はサーバ未割当時のラベル／投票プレビュー用アクセント（青系を避ける）。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_FEATURE_EMA_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker 公式 **float16** `.task` と WASM／GPU・CPU フォールバック、検出しきい値は任意）。手が検出されていないフレームでは `public/hand-guide.png` を `#cam-hand-guide` でカメラプレビュー上に重ね、置き方のガイドとして表示する（CSS `mix-blend-mode: screen` と `filter` で黄緑トーン、検知後も約 0.5 秒は表示してから `opacity` でフェードアウト／手が離れるとフェードイン）
+- **`game/frontend/src/config.ts`** — ゲーム定数の集約。**`GAME_RULES`**（プレイ時間・マッチ開始前カウントダウン・投票・ヒント間隔・結果待ち・最小／最大人数の既定。`VITE_WANIAR_*` で上書き）と **`game-rules.ts`**（`WebSocket` の `game_state.rules` でサーバ値に同期）を参照。バックエンドの対応環境変数は `WANIAR_*`（`game/backend/internal/config/rules.go`）。`FALLBACK_PLAYER_COLOR` はサーバ未割当時のラベル／投票プレビュー用アクセント（青系を避ける）。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_MOUTH_OUTPUT_SMOOTH` / `HAND_AXIS_SMOOTH_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker 公式 **float16** `.task` と WASM／GPU・CPU フォールバック、複数段の **minHandDetectionConfidence / minHandPresenceConfidence / minTrackingConfidence** を試行。手が検出されていないフレームでは `public/hand-guide.png` を `#cam-hand-guide` でカメラプレビュー上に重ね、置き方のガイドとして表示する（CSS `mix-blend-mode: screen` と `filter` で黄緑トーン、検知後も約 0.5 秒は表示してから `opacity` でフェードアウト／手が離れるとフェードイン）
 
 ### 3D モデルパイプライン
 
@@ -164,19 +164,9 @@ npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + W
 npm run dev:agent     # ヒント生成 Agent（8091, air でホットリロード）
 npm run dev:all       # game backend(8090) + agent(8091) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）。Go バックエンドは air で常駐し、初回ビルド後は差分だけ素早く再起動。LLM ヒント・テーマを使う場合は **`Agent/.env` に `OPENAI_API_KEY`** を書く
 npm run down:all      # dev:all で使う 5173/8090/8091 を一括停止（`scripts/down-all.mjs` + kill-port。macOS / Windows 共通）
-npm run pipeline:train:example  # サンプルデータから手モデル生成（public/models/hand-control-model.json）
 ```
 
 `air` が未インストールなら `go install github.com/air-verse/air@latest` を一度実行してください。npm スクリプトは `PATH` と `go env GOPATH` / `GOBIN` の両方を見て `air` を探します。
-
-### hand-control モデル学習（medea-pipeline）
-
-1. `npm run dev` を起動  
-2. `https://<PCのIP>:5173/medea-pipeline/collect.html` を開く  
-3. 口開閉ラベルと、**向きラベリングスティック**で首傾き（yaw/pitch）サンプルを収集して `JSON出力（前回分に追加）` を実行（例: `medea-pipeline/data/hand-dataset.json`）  
-4. JSON出力時に開発サーバーの `/api/pipeline/train` が自動実行され、`public/models/hand-control-model.json` を更新  
-5. ゲーム読み込み時に自動反映されます（未配置時はデフォルトパラメータ）  
-6. 既存の `hand-control-model.json` がある場合は、**前モデルへ追加学習（重み付きマージ）**されます
 
 ### マルチプレイ同期（game/backend）
 
@@ -242,16 +232,16 @@ WaniAR/
 │   │   ├── interface/http/    ← HTTPハンドラ (POST /hint)
 │   │   └── usecase/           ← プロンプト構築・ヒント生成ロジック
 │   └── .env                   ← OPENAI_API_KEY
-├── medea-pipeline/            ← 右手操作学習パイプライン
-│   ├── collect.html           ← 学習データ収集UI
+├── medea-pipeline/            ← 任意の補助ツール（収集 UI 等。ゲームの手制御は MediaPipe のみ）
+│   ├── collect.html
 │   ├── backend/
 │   │   ├── go.mod
-│   │   └── cmd/server/main.go ← 学習データ保存 + 学習実行 API（Go）
-│   ├── data/                  ← 収集データ（JSON）
-│   ├── models/                ← 学習済みモデル（ミラー）
-│   └── scripts/train-hand-control-model.ts
+│   │   └── cmd/server/main.go
+│   ├── data/
+│   ├── models/
+│   └── scripts/
 ├── index.html                ← Vite エントリ（`#app` に Vue をマウント → `main.ts`）
-├── public/models/             ← ゲームが読み込む hand-control-model.json
+├── public/models/             ← 互換用（空でも可）
 ├── vite.config.js
 ├── package.json
 └── README.md
