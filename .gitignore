@@ -25,7 +25,10 @@ medea-pipeline/data/hand-dataset.json
 *.tfstate.lock.info
 
 # Terraform execution plans (can contain sensitive data)
+tfplan*
 *.tfplan
+*.tfstate
+*.tfstate.*
 
 # Terraform local vars (sensitive)
 terraform.tfvars

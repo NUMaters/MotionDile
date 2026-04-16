@@ -105,7 +105,7 @@ $VPC_ID=$(aws eks describe-cluster --region $REGION --name $CLUSTER --query "clu
 helm repo add eks https://aws.github.io/eks-charts
 helm repo update
 
-kubectl apply -f - @"
+@"
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -113,7 +113,7 @@ metadata:
   namespace: kube-system
   annotations:
     eks.amazonaws.com/role-arn: $ALB_ROLE_ARN
-"@
+"@ | kubectl apply -f -
 
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller `
   -n kube-system `
@@ -146,7 +146,7 @@ docker push $IMAGE_URI
 $NAMESPACE="waniar"
 $IMAGE_URI="<ECRのimage URI>"
 
-kubectl apply -f - @"
+@"
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -220,7 +220,7 @@ spec:
                 name: game-backend
                 port:
                   number: 80
-"@
+"@ | kubectl apply -f -
 ```
 
 確認:
@@ -318,4 +318,3 @@ LLMヒントを本番有効化する場合は、`Agent` サービスもコンテ
 `docker ... daemon is running` エラー
 
 - Docker Desktop起動・`docker version` で確認
-
