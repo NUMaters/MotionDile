@@ -40,7 +40,7 @@ variable "enable_cloudfront" {
 
 variable "api_alb_dns_name" {
   type        = string
-  description = "ALB DNS name created by AWS Load Balancer Controller (used as CloudFront origin for /api/* and /ws)."
+  description = "ALB DNS name created by AWS Load Balancer Controller (used as CloudFront origin for /api/*, /game-api/*, /ws, and /game-ws)."
   default     = ""
   validation {
     condition     = var.enable_cloudfront == false || length(var.api_alb_dns_name) > 0

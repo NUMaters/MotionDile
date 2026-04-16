@@ -55,6 +55,37 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewer"
 }
 
+resource "aws_cloudfront_function" "api_path_rewrite" {
+  count   = var.enable_cloudfront ? 1 : 0
+  name    = "${var.name}-api-path-rewrite"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  comment = "Rewrite /game-api and /game-ws to backend paths"
+  code    = <<-EOT
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri || "";
+
+  if (uri.indexOf("/game-api/") === 0) {
+    request.uri = "/api/" + uri.substring("/game-api/".length);
+    return request;
+  }
+
+  if (uri === "/game-ws") {
+    request.uri = "/ws";
+    return request;
+  }
+
+  if (uri.indexOf("/game-ws/") === 0) {
+    request.uri = "/ws/" + uri.substring("/game-ws/".length);
+    return request;
+  }
+
+  return request;
+}
+EOT
+}
+
 resource "aws_cloudfront_origin_access_control" "frontend" {
   count                             = var.enable_cloudfront ? 1 : 0
   name                              = "${var.name}-oac"
@@ -156,6 +187,24 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   ordered_cache_behavior {
+    path_pattern           = "/game-api/*"
+    target_origin_id       = "alb-api"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods  = ["GET", "HEAD", "OPTIONS"]
+
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.api_path_rewrite[0].arn
+    }
+  }
+
+  ordered_cache_behavior {
     path_pattern           = "/ws"
     target_origin_id       = "alb-api"
     viewer_protocol_policy = "redirect-to-https"
@@ -166,6 +215,24 @@ resource "aws_cloudfront_distribution" "main" {
 
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/game-ws"
+    target_origin_id       = "alb-api"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS"]
+    cached_methods  = ["GET", "HEAD", "OPTIONS"]
+
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.api_path_rewrite[0].arn
+    }
   }
 
   custom_error_response {
