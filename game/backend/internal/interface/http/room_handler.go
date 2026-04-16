@@ -18,7 +18,8 @@ func NewRoomHandler(usecase *usecase.RoomUsecase) *RoomHandler {
 }
 
 type joinRequest struct {
-	PlayerID string `json:"playerId"`
+	PlayerID    string `json:"playerId"`
+	DisplayName string `json:"displayName"`
 }
 
 func (h *RoomHandler) Join(c *gin.Context) {
@@ -30,12 +31,21 @@ func (h *RoomHandler) Join(c *gin.Context) {
 	}
 
 	snapshot, err := h.usecase.Join(c.Request.Context(), usecase.JoinInput{
-		RoomID:   roomID,
-		PlayerID: req.PlayerID,
+		RoomID:      roomID,
+		PlayerID:    req.PlayerID,
+		DisplayName: req.DisplayName,
 	})
 	if err != nil {
 		if errors.Is(err, usecase.ErrInvalidInput) {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "message": err.Error()})
+			return
+		}
+		if errors.Is(err, usecase.ErrGameInProgress) {
+			c.JSON(http.StatusConflict, gin.H{"ok": false, "code": "GAME_IN_PROGRESS", "message": err.Error()})
+			return
+		}
+		if errors.Is(err, usecase.ErrRoomFull) {
+			c.JSON(http.StatusConflict, gin.H{"ok": false, "code": "ROOM_FULL", "message": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
@@ -43,6 +53,30 @@ func (h *RoomHandler) Join(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "snapshot": snapshot})
+}
+
+type resolveLobbyRequest struct {
+	PreferredRoomID string `json:"preferredRoomId"`
+	ExcludeRoomID   string `json:"excludeRoomId"`
+}
+
+func (h *RoomHandler) ResolveLobby(c *gin.Context) {
+	var req resolveLobbyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "message": "invalid json"})
+		return
+	}
+	roomID, redirected, reason, err := h.usecase.ResolveLobbyRoom(c.Request.Context(), req.PreferredRoomID, req.ExcludeRoomID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":         true,
+		"roomId":     roomID,
+		"redirected": redirected,
+		"reason":     reason,
+	})
 }
 
 func (h *RoomHandler) Snapshot(c *gin.Context) {

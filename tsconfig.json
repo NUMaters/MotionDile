@@ -15,5 +15,9 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["game/frontend/src/**/*.ts", "medea-pipeline/scripts/**/*.ts"]
+  "include": [
+    "game/frontend/src/**/*.ts",
+    "game/frontend/src/**/*.vue",
+    "medea-pipeline/scripts/**/*.ts"
+  ]
 }

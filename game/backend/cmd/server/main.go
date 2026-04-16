@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"waniar/game-backend/internal/config"
 	"waniar/game-backend/internal/infrastructure/memory"
 	httpif "waniar/game-backend/internal/interface/http"
 	"waniar/game-backend/internal/interface/ws"
@@ -16,9 +17,14 @@ import (
 
 func main() {
 	repo := memory.NewRoomRepository()
-	roomUsecase := usecase.NewRoomUsecase(repo)
+	agentURL := getenv("AGENT_URL", "http://127.0.0.1:8091")
+	gameRules := config.LoadRulesFromEnv()
+	roomUsecase := usecase.NewRoomUsecase(repo, agentURL, gameRules)
+	log.Printf("[game-backend] agent URL: %s", agentURL)
+	log.Printf("[game-backend] game rules: play=%v countdown=%v hint=%v min=%d max=%d",
+		gameRules.GameDuration, gameRules.MatchCountdown, gameRules.HintInterval, gameRules.MinPlayers, gameRules.MaxPlayers)
 	roomHandler := httpif.NewRoomHandler(roomUsecase)
-	wsGateway := ws.NewGateway(roomUsecase)
+	wsGateway := ws.NewGateway(roomUsecase, gameRules)
 
 	r := gin.New()
 	r.Use(gin.Logger())
@@ -34,6 +40,7 @@ func main() {
 
 	v1 := r.Group("/api/v1")
 	{
+		v1.POST("/rooms/resolve", roomHandler.ResolveLobby)
 		v1.POST("/rooms/:roomID/players", roomHandler.Join)
 		v1.GET("/rooms/:roomID/snapshot", roomHandler.Snapshot)
 		v1.DELETE("/rooms/:roomID/players/:playerID", roomHandler.Leave)

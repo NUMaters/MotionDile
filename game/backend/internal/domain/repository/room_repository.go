@@ -11,4 +11,10 @@ type RoomRepository interface {
 	UpsertState(ctx context.Context, roomID string, state entity.PlayerState) (entity.RoomSnapshot, error)
 	RemovePlayer(ctx context.Context, roomID, playerID string) (entity.RoomSnapshot, error)
 	GetSnapshot(ctx context.Context, roomID string) (entity.RoomSnapshot, error)
+	GetGameState(ctx context.Context, roomID string) (entity.GameState, error)
+	SetGameState(ctx context.Context, roomID string, gs entity.GameState) error
+	PickEnemy(ctx context.Context, roomID string) (string, error)
+	CastVote(ctx context.Context, roomID, voterID, votedForID string) (entity.GameState, error)
+	GetPlayerIDs(ctx context.Context, roomID string) ([]string, error)
+	ListRoomIDs(ctx context.Context) ([]string, error)
 }
