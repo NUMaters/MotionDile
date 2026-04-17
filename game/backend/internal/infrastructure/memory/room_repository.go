@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"sort"
 	"strings"
@@ -12,6 +13,9 @@ import (
 )
 
 var _ repository.RoomRepository = (*RoomRepository)(nil)
+
+// ErrVoteAlreadyCast は同一プレイヤーからの2回目以降の投票を拒否するときに返す。
+var ErrVoteAlreadyCast = errors.New("vote already cast")
 
 type roomState struct {
 	version int64
@@ -159,6 +163,9 @@ func (r *RoomRepository) CastVote(_ context.Context, roomID, voterID, votedForID
 	room := r.ensureRoom(roomID)
 	if room.game.Votes == nil {
 		room.game.Votes = make(map[string]string)
+	}
+	if _, exists := room.game.Votes[voterID]; exists {
+		return entity.GameState{}, ErrVoteAlreadyCast
 	}
 	room.game.Votes[voterID] = votedForID
 	gs := room.game

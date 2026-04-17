@@ -413,11 +413,46 @@ export function showHint(text: string): void {
 
 // ─── Voting ───
 let selectedVoteTarget: string | null = null;
+/** 「投票する」確定後は変更不可（サーバも重複投票を拒否） */
+let voteCommitted = false;
 let voteTimerInterval: number | null = null;
 let onVoteCallback: ((votedFor: string) => void) | null = null;
 /** サーバの voteEnd（Unix ms）に合わせてタイマーを進める */
 let voteEndMsRef = 0;
 let onVoteExtendRequest: (() => void) | null = null;
+/** 延長適用アニメーション用（false→true の遷移だけ再生） */
+let voteExtendUsedPreviously = false;
+
+function voteExtendPrefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** 過半数により延長がサーバに適用された直後のフィードバック（カウント横の +10 が一瞬ポップ） */
+function triggerVoteExtendAppliedVisual(): void {
+  const pop = document.getElementById('vote-extend-pop');
+  if (!pop) return;
+
+  const finish = (): void => {
+    pop.classList.remove('vote-extend-pop--play');
+    pop.setAttribute('hidden', '');
+    pop.setAttribute('aria-hidden', 'true');
+  };
+
+  pop.removeAttribute('hidden');
+  pop.setAttribute('aria-hidden', 'false');
+  void pop.offsetWidth;
+  pop.classList.add('vote-extend-pop--play');
+
+  const ms = voteExtendPrefersReducedMotion() ? 500 : 750;
+  const t = window.setTimeout(finish, ms);
+  const onAnimEnd = (ev: AnimationEvent): void => {
+    if (ev.target !== pop) return;
+    window.clearTimeout(t);
+    pop.removeEventListener('animationend', onAnimEnd);
+    finish();
+  };
+  pop.addEventListener('animationend', onAnimEnd);
+}
 
 export function setVoteCallback(cb: (votedFor: string) => void): void {
   onVoteCallback = cb;
@@ -425,6 +460,33 @@ export function setVoteCallback(cb: (votedFor: string) => void): void {
 
 export function setVoteExtendRequestCallback(cb: () => void): void {
   onVoteExtendRequest = cb;
+}
+
+function applyVoteUiLocked(votedFor: string): void {
+  voteCommitted = true;
+  selectedVoteTarget = votedFor;
+  const listEl = document.getElementById('vote-list');
+  const confirmBtn = document.getElementById('btn-vote-confirm');
+  if (listEl) {
+    listEl.classList.add('vote-list--locked');
+    listEl.setAttribute('aria-disabled', 'true');
+    listEl.querySelectorAll('.vote-card').forEach((c) => {
+      const el = c as HTMLElement;
+      el.classList.toggle('selected', el.dataset.pid === votedFor);
+    });
+  }
+  if (confirmBtn) {
+    confirmBtn.classList.remove('active');
+    (confirmBtn as HTMLButtonElement).disabled = true;
+    confirmBtn.innerHTML = `${IC.check(16)} 投票済み`;
+  }
+}
+
+/** game_state の votes に自分の票が載ったとき（他端末やブロードキャスト同期用） */
+export function applyVoteLockFromServer(votedForTarget: string): void {
+  if (voteCommitted) return;
+  if (!votedForTarget) return;
+  applyVoteUiLocked(votedForTarget);
 }
 
 function majorityRequiredClient(n: number): number {
@@ -452,10 +514,14 @@ export function applyVoteExtendServerPayload(
   const btn = document.getElementById('btn-vote-extend') as HTMLButtonElement | null;
   if (!statusEl || !btn) return;
 
+  const justApplied = payload.voteExtendUsed && !voteExtendUsedPreviously;
+  voteExtendUsedPreviously = payload.voteExtendUsed;
+
   if (payload.voteExtendUsed) {
     btn.disabled = true;
-    btn.textContent = '投票時間は延長済み（+10秒）';
+    btn.textContent = '時間延長（適用済み）';
     statusEl.textContent = '';
+    if (justApplied) triggerVoteExtendAppliedVisual();
     return;
   }
 
@@ -464,10 +530,10 @@ export function applyVoteExtendServerPayload(
   const need = payload.requiredCount;
   if (req.includes(localPlayerId)) {
     btn.disabled = true;
-    btn.textContent = '延長に賛成済み';
+    btn.textContent = '時間延長（賛成済み）';
   } else {
     btn.disabled = false;
-    btn.textContent = '時間延長を希望（+10秒）';
+    btn.textContent = '時間延長';
   }
   statusEl.textContent = `延長の賛成 ${n}/${need}人（過半数で全員 +10秒・1回だけ）`;
 }
@@ -480,6 +546,7 @@ export function startVoting(
 ): void {
   disposeVotePreviews();
   selectedVoteTarget = null;
+  voteCommitted = false;
   showScreen('voting');
 
   const listEl = document.getElementById('vote-list');
@@ -489,6 +556,8 @@ export function startVoting(
   const others = players.filter((p) => p.playerId !== localPlayerId);
 
   if (listEl) {
+    listEl.classList.remove('vote-list--locked');
+    listEl.removeAttribute('aria-disabled');
     listEl.innerHTML = others
       .map(
         (p) => {
@@ -503,6 +572,7 @@ export function startVoting(
       .join('');
 
     listEl.onclick = (e) => {
+      if (voteCommitted) return;
       const card = (e.target as HTMLElement).closest('.vote-card') as HTMLElement | null;
       if (!card) return;
       listEl.querySelectorAll('.vote-card').forEach((c) => c.classList.remove('selected'));
@@ -521,12 +591,10 @@ export function startVoting(
     confirmBtn.textContent = '投票する';
     confirmBtn.classList.remove('active');
     confirmBtn.onclick = () => {
-      if (selectedVoteTarget && onVoteCallback) {
-        onVoteCallback(selectedVoteTarget);
-        confirmBtn.classList.remove('active');
-        (confirmBtn as HTMLButtonElement).disabled = true;
-        confirmBtn.innerHTML = `${IC.check(16)} 投票済み`;
-      }
+      if (voteCommitted || !selectedVoteTarget || !onVoteCallback) return;
+      const target = selectedVoteTarget;
+      onVoteCallback(target);
+      applyVoteUiLocked(target);
     };
   }
 
@@ -542,6 +610,14 @@ export function startVoting(
         m.innerHTML = `<div class="vote-preview-fallback" style="background:${col}"></div>`;
       }
     }
+  }
+
+  voteExtendUsedPreviously = false;
+  const popReset = document.getElementById('vote-extend-pop');
+  if (popReset) {
+    popReset.classList.remove('vote-extend-pop--play');
+    popReset.setAttribute('hidden', '');
+    popReset.setAttribute('aria-hidden', 'true');
   }
 
   voteEndMsRef = voteEnd;

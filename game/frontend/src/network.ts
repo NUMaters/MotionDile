@@ -13,6 +13,7 @@ import {
   updateMatchmaking, updateMatchmakingPlayers, startGameHud, showHint,
   startVoting, showResults, setVoteCallback, setVoteExtendRequestCallback,
   applyVoteExtendServerPayload, updateVotingDeadlineFromServer, getPlayerRole,
+  applyVoteLockFromServer,
 } from './screens';
 import { setPlayerDisplayNamesFromSnapshot, setPlayerDisplayName, getJoinDisplayName, resolveDisplayName } from './player-names';
 import {
@@ -505,6 +506,10 @@ function handleGameState(payload: Record<string, unknown>): void {
   const players = (payload.players as { displayName: string; color: string }[]) || [];
 
   if (phase === 'voting') {
+    const votes = payload.votes as Record<string, string> | undefined;
+    if (votes && typeof votes[playerId] === 'string' && votes[playerId]) {
+      applyVoteLockFromServer(votes[playerId]);
+    }
     const ve = (payload.voteEnd as number) || 0;
     if (ve) updateVotingDeadlineFromServer(ve);
     if (payload.voteExtendUsed !== undefined || payload.voteExtendRequestPlayerIds) {

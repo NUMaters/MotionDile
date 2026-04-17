@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"sort"
 	"testing"
@@ -116,6 +117,11 @@ func TestRoomRepository_GameStateVoteAndListRoomIDs(t *testing.T) {
 	}
 	if gs.Votes["p1"] != "p1" {
 		t.Fatalf("vote not recorded: %+v", gs.Votes)
+	}
+
+	_, err = r.CastVote(ctx, "room-b", "p1", "p2")
+	if !errors.Is(err, ErrVoteAlreadyCast) {
+		t.Fatalf("second vote should be rejected, got err=%v", err)
 	}
 
 	ids, err := r.ListRoomIDs(ctx)
