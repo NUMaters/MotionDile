@@ -860,6 +860,19 @@ body { position: relative; }
   font-size: 52px; line-height: 1;
 }
 .vote-card .vote-name { font-size: 14px; font-weight: 700; color: #e6edf3; word-break: break-word; line-height: 1.25; max-width: 140px; }
+#vote-extend-status {
+  font-size: 13px; color: #8b949e; text-align: center; margin: 10px 12px 0;
+  max-width: min(92vw, 400px); line-height: 1.45;
+}
+#btn-vote-extend {
+  margin-top: 10px; padding: 11px 22px; border: 2px solid #388bfd; border-radius: 12px;
+  background: rgba(56, 139, 253, 0.12); color: #58a6ff; font-size: 15px; font-weight: 700;
+  cursor: pointer; transition: background .15s, transform .1s;
+}
+#btn-vote-extend:disabled {
+  opacity: 0.45; cursor: not-allowed; border-color: #30363d; color: #8b949e;
+}
+#btn-vote-extend:not(:disabled):active { transform: scale(0.98); }
 #btn-vote-confirm {
   margin-top: 16px; padding: 14px 40px; border: none; border-radius: 14px;
   background: linear-gradient(180deg, #ff6b6b, #f85149);

@@ -4,6 +4,21 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 
+/** game backend 未起動時の ECONNREFUSED を、約 8 秒に 1 回まで日本語で案内（ログスパム抑制） */
+function proxyWarnIfBackendDown(proxy, label) {
+  let last = 0;
+  proxy.on('error', (err) => {
+    if (!err || err.code !== 'ECONNREFUSED') return;
+    const now = Date.now();
+    if (now - last < 8000) return;
+    last = now;
+    console.warn(
+      `\n[vite] ${label}: 127.0.0.1:8090 に接続できません（game backend 未起動）。\n` +
+        '    別ターミナルで npm run dev:game-backend または npm run dev:all を起動してください。\n',
+    );
+  });
+}
+
 /**
  * `modeling/Wani_game.glb` を `public/modeling/` に同期する。
  * Vite は `public/` をそのままルートで配信するため、ミドルウェア順序に依存せず確実に GLB が取れる。
@@ -175,12 +190,14 @@ export default defineConfig({
         target: 'http://127.0.0.1:8090',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/game-api/, '/api'),
+        configure: (proxy) => proxyWarnIfBackendDown(proxy, 'proxy /game-api →'),
       },
       '/game-ws': {
         target: 'ws://127.0.0.1:8090',
         ws: true,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/game-ws/, '/ws'),
+        configure: (proxy) => proxyWarnIfBackendDown(proxy, 'proxy /game-ws →'),
       },
     },
   },

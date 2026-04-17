@@ -11,7 +11,8 @@ import { setMultiplayerStatus } from './hud';
 import {
   showScreen, getCurrentScreen,
   updateMatchmaking, updateMatchmakingPlayers, startGameHud, showHint,
-  startVoting, showResults, setVoteCallback, getPlayerRole,
+  startVoting, showResults, setVoteCallback, setVoteExtendRequestCallback,
+  applyVoteExtendServerPayload, updateVotingDeadlineFromServer, getPlayerRole,
 } from './screens';
 import { setPlayerDisplayNamesFromSnapshot, setPlayerDisplayName, getJoinDisplayName, resolveDisplayName } from './player-names';
 import {
@@ -442,6 +443,9 @@ export function connectGameSocket(): void {
         case 'vote_start':
           handleVoteStart(envelope.payload as Record<string, unknown>);
           break;
+        case 'vote_extend_update':
+          handleVoteExtendUpdate(envelope.payload as Record<string, unknown>);
+          break;
         case 'vote_result':
           handleVoteResult(envelope.payload as Record<string, unknown>);
           break;
@@ -486,6 +490,11 @@ function sendVote(votedFor: string): void {
   gameSocket.send(JSON.stringify({ type: 'vote', payload: { votedFor } }));
 }
 
+function sendVoteExtend(): void {
+  if (!gameSocket || gameSocket.readyState !== WebSocket.OPEN) return;
+  gameSocket.send(JSON.stringify({ type: 'vote_extend' }));
+}
+
 let currentRole = 'citizen';
 
 function handleGameState(payload: Record<string, unknown>): void {
@@ -494,6 +503,23 @@ function handleGameState(payload: Record<string, unknown>): void {
   const playerCount = (payload.playerCount as number) || 0;
   const countdownEnd = (payload.countdownEnd as number) || 0;
   const players = (payload.players as { displayName: string; color: string }[]) || [];
+
+  if (phase === 'voting') {
+    const ve = (payload.voteEnd as number) || 0;
+    if (ve) updateVotingDeadlineFromServer(ve);
+    if (payload.voteExtendUsed !== undefined || payload.voteExtendRequestPlayerIds) {
+      applyVoteExtendServerPayload(
+        {
+          voteEnd: ve || Date.now(),
+          voteExtendUsed: !!(payload.voteExtendUsed as boolean),
+          requestPlayerIds: (payload.voteExtendRequestPlayerIds as string[]) || [],
+          requiredCount: (payload.voteExtendRequiredCount as number) || 1,
+          roundPlayerCount: playerCount,
+        },
+        playerId,
+      );
+    }
+  }
 
   if (phase === 'waiting' || phase === 'countdown') {
     const screen = getCurrentScreen();
@@ -527,8 +553,24 @@ function handleVoteStart(payload: Record<string, unknown>): void {
   for (const pl of players) {
     if (pl.displayName) setPlayerDisplayName(pl.playerId, pl.displayName);
   }
+  setVoteExtendRequestCallback(sendVoteExtend);
   startVoting(voteEnd, players, playerId, getVotePreviewModel());
   setVoteCallback(sendVote);
+}
+
+function handleVoteExtendUpdate(payload: Record<string, unknown>): void {
+  const voteEnd = (payload.voteEnd as number) || Date.now();
+  updateVotingDeadlineFromServer(voteEnd);
+  applyVoteExtendServerPayload(
+    {
+      voteEnd,
+      voteExtendUsed: !!(payload.voteExtendUsed as boolean),
+      requestPlayerIds: (payload.requestPlayerIds as string[]) || [],
+      requiredCount: (payload.requiredCount as number) || 1,
+      roundPlayerCount: (payload.roundPlayerCount as number) || 0,
+    },
+    playerId,
+  );
 }
 
 function handleRoomClosed(): void {

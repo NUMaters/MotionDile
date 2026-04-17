@@ -92,7 +92,7 @@
 - **行動テーマシステム** — ゲーム開始時に市民チームと敵ワニにそれぞれ異なる「行動ミッション（テーマ）」をランダム割り当て（`usecase/themes.go`）。例:「障害物の近くを移動する」「マップの外周を歩き回る」等。各プレイヤーには自分のテーマのみ表示され、陣営は直接通知されない。プレイヤーはテーマに沿って行動しつつ、**異なる動きをしている敵ワニ**を探す。テーマは `game_start` WebSocket メッセージで各クライアントに送信、`GameState` に `AllyTheme`/`EnemyTheme` として保存される
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、**市民テーマと敵テーマの両方**を受け取り、敵の行動がテーマと合わないことを示唆するヒントを生成。ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与。フロントは `screens.ts` の `showHint` が Web Animations API で、**行動テーマバッジ直下**（`#agent-hint-danmaku`）へ**弾幕風の横スクロール**で表示（従来の画面中央ポップアップは廃止）
 - **Vite v6.2** — 開発サーバー・ビルドツール（`@vitejs/plugin-vue` で `.vue` を処理し、`.ts` をトランスパイル）
-- **dev-all ランナー** — `scripts/dev-all.mjs` が Go ビルド後に game backend・Agent・Vite を起動（いずれか終了時に他プロセスへ `SIGTERM`）
+- **dev-all ランナー** — `scripts/dev-all.mjs` が Node の `spawn` で game backend（air）・Agent（air）・Vite を同時起動（`concurrently` は環境によりハングするため不使用）。いずれか終了時に他プロセスへ `SIGTERM`
 - **air** — Go バックエンドをホットリロード常駐で起動。`dev:all` の初回待ち時間を減らし、以後の再起動を高速化
 - **serve** — 静的 HTTP サーバー（ビューア配信）
 - **`game/frontend/src/config.ts`** — ゲーム定数の集約。**`GAME_RULES`**（プレイ時間・マッチ開始前カウントダウン・投票・ヒント間隔・結果待ち・最小／最大人数の既定。`VITE_WANIAR_*` で上書き）と **`game-rules.ts`**（`WebSocket` の `game_state.rules` でサーバ値に同期）を参照。バックエンドの対応環境変数は `WANIAR_*`（`game/backend/internal/config/rules.go`）。`FALLBACK_PLAYER_COLOR` はサーバ未割当時のラベル／投票プレビュー用アクセント（青系を避ける）。移動可能エリアの円半径は `BOUNDARY_RADIUS`（`null` で地形から自動算出）、`BOUNDARY_RADIUS_CLAMP_TO_TERRAIN` で地形より外に壁がはみ出さないよう上限をかけられる。タッチジョイスティックの見た目は `JOYSTICK_BASE_*` / `JOYSTICK_THUMB_RADIUS_PX` / `JOYSTICK_RING_*`（`input.ts` の `applyJoystickLayoutFromConfig`）。ジャイロ視点の上限・滑らかさは `DEVICE_LOOK_MAX_YAW_RAD` / `DEVICE_LOOK_MAX_PITCH_RAD` / `DEVICE_LOOK_SMOOTH`、iOS 相対向き用の感度は `DEVICE_LOOK_TILT_GAIN`。視点リセット時のイージングは `DEVICE_LOOK_RECENTER_SMOOTH` / `DEVICE_LOOK_RECENTER_DURATION_S`（`device-look.ts` でセンサーを一時無効化してから正面へ収束）。段差は `MAX_STEP_UP` / `TERRAIN_MIN_NORMAL_Y`（`world.ts` でマテリアル名に `stone` を含むメッシュを足場レイ＋側面コリジョンの両方に登録し、低い岩へは登れる）。手トラッキングは `HAND_MOUTH_OUTPUT_SMOOTH` / `HAND_AXIS_SMOOTH_ALPHA` / `HEAD_HAND_TRACK_SMOOTH` / `HAND_DETECT_INTERVAL`（`hand-tracking.ts`、MediaPipe Hand Landmarker 公式 **float16** `.task` と WASM／GPU・CPU フォールバック、複数段の **minHandDetectionConfidence / minHandPresenceConfidence / minTrackingConfidence** を試行。手が検出されていないフレームでは `public/hand-guide.png` を `#cam-hand-guide` でカメラプレビュー上に重ね、置き方のガイドとして表示する（CSS `mix-blend-mode: screen` と `filter` で黄緑トーン、検知後も約 0.5 秒は表示してから `opacity` でフェードアウト／手が離れるとフェードイン）
@@ -159,7 +159,7 @@ Hips
 npm install
 npm run build:model   # Wani_game.glb を生成
 npm run viewer        # http://localhost:3000/viewer でビューア起動
-npm run dev           # Vite フロントエンドのみ（既定 5173。`/game-api` 等は game backend 起動時にプロキシ）
+npm run dev           # Vite のみ（5173）。**このだけだと** `127.0.0.1:8090` の game backend が無く `/game-api` プロキシが ECONNREFUSED になる → `dev:game-backend` か `dev:all` を別途起動
 npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + WebSocket, 8090, air でホットリロード）
 npm run dev:agent     # ヒント生成 Agent（8091, air でホットリロード）
 npm run dev:all       # game backend(8090) + agent(8091) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）。Go バックエンドは air で常駐し、初回ビルド後は差分だけ素早く再起動。LLM ヒント・テーマを使う場合は **`Agent/.env` に `OPENAI_API_KEY`** を書く
@@ -174,6 +174,7 @@ npm run down:all      # dev:all で使う 5173/8090/8091 を一括停止（`scri
 2. 別ターミナルで `npm run dev` を起動（Vite は `/game-api` と `/game-ws` を game backend へプロキシ）
 3. 複数端末で `https://<PC-IP>:5173/` を開き「ゲーム参加」する（待機中の部屋があればそこへ、なければ新規ルーム。ゲーム終了後に再度参加すると部屋はリセットされ、再度検索から始まる）。同じ待機ルームに集まった端末同士で移動と向きがリアルタイム同期。任意で `?room=部屋ID` を付けるとその部屋を優先（共有用）
 4. 他プレイヤーは読み込み完了後に **ワニ実モデル** で表示されます（読み込み前は一時的に簡易マーカー）
+5. **投票フェーズ**では「時間延長を希望」ボタンがあり、**ラウンド参加者**（`roundPlayerIds`）の **過半数** が押すと **1 回だけ** 投票終了時刻が **10 秒** 延びる（WebSocket `vote_extend` / `vote_extend_update`。延長後はサーバが投票用タイマーを差し替え）
 
 ### スマホでゲームが「ずっと読み込み中」になる場合
 

@@ -80,6 +80,8 @@
         <div id="vote-timer" class="vote-timer">20</div>
       </div>
       <div id="vote-list" />
+      <p id="vote-extend-status" class="vote-extend-status" aria-live="polite" />
+      <button id="btn-vote-extend" type="button" class="btn-vote-extend">時間延長を希望（+10秒）</button>
       <button id="btn-vote-confirm" type="button">投票する</button>
     </div>
 

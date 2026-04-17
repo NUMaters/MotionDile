@@ -212,6 +212,8 @@ func (g *Gateway) readPump(client *Client) {
 			g.handleMove(client, msg.Payload)
 		case "vote":
 			g.handleVote(client, msg.Payload)
+		case "vote_extend":
+			g.handleVoteExtend(client)
 		case "landmarks":
 			g.handleLandmarks(client, msg.Payload)
 		}
@@ -278,6 +280,97 @@ func (g *Gateway) handleVote(client *Client, raw json.RawMessage) {
 	if quorum > 0 && len(gs.Votes) >= quorum {
 		go g.finishVoting(client.roomID)
 	}
+}
+
+const voteExtendExtraMs int64 = 10_000
+
+// voteMajorityThreshold は過半数に必要な人数（⌊n/2⌋+1）。例: 5→3, 4→3, 3→2, 2→2, 1→1
+func voteMajorityThreshold(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	return n/2 + 1
+}
+
+func (g *Gateway) handleVoteExtend(client *Client) {
+	gs, err := g.usecase.GetGameState(context.Background(), client.roomID)
+	if err != nil || gs.Phase != entity.PhaseVoting {
+		return
+	}
+	if gs.VoteExtendUsed {
+		g.broadcastVoteExtendUpdate(client.roomID, gs, false)
+		return
+	}
+	if len(gs.RoundPlayerIDs) > 0 && !playerIDInList(client.playerID, gs.RoundPlayerIDs) {
+		return
+	}
+	for _, id := range gs.VoteExtendRequestPlayerIDs {
+		if id == client.playerID {
+			return
+		}
+	}
+	gs.VoteExtendRequestPlayerIDs = append(gs.VoteExtendRequestPlayerIDs, client.playerID)
+	sort.Strings(gs.VoteExtendRequestPlayerIDs)
+
+	n := len(gs.RoundPlayerIDs)
+	if n == 0 {
+		n = g.roomClientCount(client.roomID)
+	}
+	required := voteMajorityThreshold(n)
+	applied := false
+	if len(gs.VoteExtendRequestPlayerIDs) >= required {
+		gs.VoteExtendUsed = true
+		gs.VoteEnd += voteExtendExtraMs
+		gs.VoteExtendRequestPlayerIDs = nil
+		applied = true
+		g.scheduleVotingEnd(client.roomID, gs.VoteEnd)
+	}
+	_ = g.usecase.SetGameState(context.Background(), client.roomID, gs)
+	g.broadcastVoteExtendUpdate(client.roomID, gs, applied)
+}
+
+func (g *Gateway) broadcastVoteExtendUpdate(roomID string, gs entity.GameState, applied bool) {
+	n := len(gs.RoundPlayerIDs)
+	if n == 0 {
+		n = g.roomClientCount(roomID)
+	}
+	req := gs.VoteExtendRequestPlayerIDs
+	if req == nil {
+		req = []string{}
+	}
+	payload := map[string]interface{}{
+		"voteEnd":          gs.VoteEnd,
+		"voteExtendUsed":   gs.VoteExtendUsed,
+		"requestPlayerIds": req,
+		"requestCount":     len(req),
+		"requiredCount":    voteMajorityThreshold(n),
+		"roundPlayerCount": n,
+		"applied":          applied,
+	}
+	g.broadcastToRoom(roomID, genericEnvelope{Type: "vote_extend_update", Payload: payload})
+}
+
+func (g *Gateway) scheduleVotingEnd(roomID string, voteEndUnixMs int64) {
+	g.cancelGameTimer(roomID)
+	rem := time.Until(time.UnixMilli(voteEndUnixMs))
+	if rem < 0 {
+		rem = 0
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	g.gameMu.Lock()
+	g.gameCtxs[roomID] = &roomGameCtx{cancel: cancel}
+	g.gameMu.Unlock()
+
+	go func() {
+		select {
+		case <-time.After(rem):
+			g.gameMu.Lock()
+			delete(g.gameCtxs, roomID)
+			g.gameMu.Unlock()
+			g.finishVoting(roomID)
+		case <-ctx.Done():
+		}
+	}()
 }
 
 func (g *Gateway) handleLandmarks(client *Client, raw json.RawMessage) {
@@ -383,7 +476,7 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 		})
 	}
 	r := g.rules
-	return map[string]interface{}{
+	payload := map[string]interface{}{
 		"phase":        gs.Phase,
 		"playerCount":  gs.PlayerCount,
 		"countdownEnd": gs.CountdownEnd,
@@ -401,6 +494,20 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 			"resultDurationSec": int(r.ResultDuration / time.Second),
 		},
 	}
+	if gs.Phase == entity.PhaseVoting {
+		n := len(gs.RoundPlayerIDs)
+		if n == 0 {
+			n = g.roomClientCount(roomID)
+		}
+		ids := gs.VoteExtendRequestPlayerIDs
+		if ids == nil {
+			ids = []string{}
+		}
+		payload["voteExtendUsed"] = gs.VoteExtendUsed
+		payload["voteExtendRequestPlayerIds"] = ids
+		payload["voteExtendRequiredCount"] = voteMajorityThreshold(n)
+	}
+	return payload
 }
 
 func (g *Gateway) broadcastGameState(roomID string, gs entity.GameState) {
@@ -599,6 +706,8 @@ func (g *Gateway) startVoting(roomID string) {
 	gs.Phase = entity.PhaseVoting
 	gs.VoteEnd = now.Add(vd).UnixMilli()
 	gs.Votes = make(map[string]string)
+	gs.VoteExtendUsed = false
+	gs.VoteExtendRequestPlayerIDs = nil
 	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
 
 	snapshot, _ := g.usecase.Snapshot(context.Background(), roomID)
@@ -628,21 +737,7 @@ func (g *Gateway) startVoting(roomID string) {
 		},
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	g.gameMu.Lock()
-	g.gameCtxs[roomID] = &roomGameCtx{cancel: cancel}
-	g.gameMu.Unlock()
-
-	go func() {
-		select {
-		case <-time.After(vd):
-			g.gameMu.Lock()
-			delete(g.gameCtxs, roomID)
-			g.gameMu.Unlock()
-			g.finishVoting(roomID)
-		case <-ctx.Done():
-		}
-	}()
+	g.scheduleVotingEnd(roomID, gs.VoteEnd)
 }
 
 func (g *Gateway) finishVoting(roomID string) {

@@ -415,9 +415,61 @@ export function showHint(text: string): void {
 let selectedVoteTarget: string | null = null;
 let voteTimerInterval: number | null = null;
 let onVoteCallback: ((votedFor: string) => void) | null = null;
+/** サーバの voteEnd（Unix ms）に合わせてタイマーを進める */
+let voteEndMsRef = 0;
+let onVoteExtendRequest: (() => void) | null = null;
 
 export function setVoteCallback(cb: (votedFor: string) => void): void {
   onVoteCallback = cb;
+}
+
+export function setVoteExtendRequestCallback(cb: () => void): void {
+  onVoteExtendRequest = cb;
+}
+
+function majorityRequiredClient(n: number): number {
+  if (n <= 0) return 1;
+  return Math.floor(n / 2) + 1;
+}
+
+/** サーバから voteEnd が更新されたとき（延長適用後など） */
+export function updateVotingDeadlineFromServer(voteEnd: number): void {
+  voteEndMsRef = voteEnd;
+}
+
+export function applyVoteExtendServerPayload(
+  payload: {
+    voteEnd: number;
+    voteExtendUsed: boolean;
+    requestPlayerIds: string[];
+    requiredCount: number;
+    roundPlayerCount: number;
+  },
+  localPlayerId: string,
+): void {
+  voteEndMsRef = payload.voteEnd;
+  const statusEl = document.getElementById('vote-extend-status');
+  const btn = document.getElementById('btn-vote-extend') as HTMLButtonElement | null;
+  if (!statusEl || !btn) return;
+
+  if (payload.voteExtendUsed) {
+    btn.disabled = true;
+    btn.textContent = '投票時間は延長済み（+10秒）';
+    statusEl.textContent = '';
+    return;
+  }
+
+  const req = payload.requestPlayerIds;
+  const n = req.length;
+  const need = payload.requiredCount;
+  if (req.includes(localPlayerId)) {
+    btn.disabled = true;
+    btn.textContent = '延長に賛成済み';
+  } else {
+    btn.disabled = false;
+    btn.textContent = '時間延長を希望（+10秒）';
+  }
+  statusEl.textContent = `延長の賛成 ${n}/${need}人（過半数で全員 +10秒・1回だけ）`;
 }
 
 export function startVoting(
@@ -492,15 +544,35 @@ export function startVoting(
     }
   }
 
+  voteEndMsRef = voteEnd;
   if (voteTimerInterval != null) window.clearInterval(voteTimerInterval);
   voteTimerInterval = window.setInterval(() => {
-    const remaining = Math.max(0, Math.ceil((voteEnd - Date.now()) / 1000));
+    const remaining = Math.max(0, Math.ceil((voteEndMsRef - Date.now()) / 1000));
     if (timerEl) timerEl.textContent = `残り ${remaining}秒`;
     if (remaining <= 0 && voteTimerInterval != null) {
       window.clearInterval(voteTimerInterval);
       voteTimerInterval = null;
     }
   }, 200);
+
+  const need = majorityRequiredClient(players.length);
+  applyVoteExtendServerPayload(
+    {
+      voteEnd,
+      voteExtendUsed: false,
+      requestPlayerIds: [],
+      requiredCount: need,
+      roundPlayerCount: players.length,
+    },
+    localPlayerId,
+  );
+
+  const extBtn = document.getElementById('btn-vote-extend') as HTMLButtonElement | null;
+  if (extBtn) {
+    extBtn.onclick = () => {
+      if (onVoteExtendRequest) onVoteExtendRequest();
+    };
+  }
 }
 
 function escapeHtml(s: string): string {
