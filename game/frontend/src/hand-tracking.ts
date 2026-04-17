@@ -50,6 +50,12 @@ let baseHandYaw: number | null = null;
 let baseHandPitch: number | null = null;
 let firstDetectionTime: number | null = null;
 
+
+let stationaryStartTime: number | null = null;
+let lastRawYaw: number | null = null;
+let lastRawPitch: number | null = null;
+
+
 /**
  * Hand Landmarker の .task（公式は float16 のみ配信。float32/latest は 404 になる）
  * @see https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
@@ -427,7 +433,10 @@ function processHandResults(results: HandLandmarkerVideoResult) {
     hadHandPrevFrame = false;
     baseHandYaw = null;
     baseHandPitch = null;
-    firstDetectionTime = null; // ★リセット
+    firstDetectionTime = null;
+    stationaryStartTime = null;
+    lastRawYaw = null;
+    lastRawPitch = null;
     return;
   }
   handState.detected = true;
@@ -442,7 +451,7 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   const vMiddleTip  = new THREE.Vector3(lm[12].x, lm[12].y, lm[12].z);
   const vThumbTip   = new THREE.Vector3(lm[4].x, lm[4].y, lm[4].z);
 
-  // ★ 2. 口の開閉（待機中も口だけは動かせるように、先に計算します）
+  // 2. 口の開閉
   const vecToMiddle = new THREE.Vector3().subVectors(vMiddleTip, vMiddleBase).normalize();
   const vecToThumb = new THREE.Vector3().subVectors(vThumbTip, vMiddleBase).normalize();
   const mouthAngle = vecToMiddle.angleTo(vecToThumb);
@@ -453,8 +462,6 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   handState.mouthOpenness = Math.max(0, Math.min(1, openness));
 
   // 3. 首の向きの計算
-  //const handAxis = new THREE.Vector3().subVectors(vMiddleBase, vWrist).normalize();
-  // 手首から「中指の先端（鼻先）」へのベクトルを完全な基準軸とする！
   const handAxis = new THREE.Vector3().subVectors(vMiddleTip, vWrist).normalize();
   const currentYaw = Math.asin(handAxis.x);
   const currentPitch = Math.asin(handAxis.y);
@@ -463,39 +470,106 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   // 🐊 1秒遅延（ディレイ）オートセンタリング
   // =======================================================
   if (firstDetectionTime === null) {
-    // 手が映った最初のフレームの時間を記録 (ミリ秒)
     firstDetectionTime = performance.now(); 
   }
 
   if (baseHandYaw === null || baseHandPitch === null) {
     const elapsed = performance.now() - firstDetectionTime;
-    
-    if (elapsed < 1000) { // ★ 1000ミリ秒（1秒）未満なら
-      // 首の動きを「正面」でロックして待機
+    if (elapsed < 1000) {
       handState.neckYaw = 0;
       handState.neckPitch = 0;
-      
-      // デバッグ描画（準備中は黄色で表示）
       if (ctx) {
-        ctx.fillStyle = '#ffff00'; // Yellow
+        ctx.fillStyle = '#ffff00';
         for (const p of rawLm) {
           ctx.beginPath(); ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 3, 0, Math.PI * 2); ctx.fill();
         }
       }
-      return; // 首の計算はスキップしてここで終了
-      
+      return; 
     } else {
-      // ★ 1秒経過した瞬間に、その時の角度を「正面」として記憶！
       baseHandYaw = currentYaw;
       baseHandPitch = currentPitch;
     }
   }
 
+  // =======================================================
+  // 🐊 厳密な条件（静止 ＋ まっすぐ）での5秒オートセンタリング
+  // =======================================================
+  if (lastRawYaw === null || lastRawPitch === null) {
+    lastRawYaw = currentYaw;
+    lastRawPitch = currentPitch;
+  }
+
+  const deltaYaw = Math.abs(currentYaw - lastRawYaw);
+  const deltaPitch = Math.abs(currentPitch - lastRawPitch);
+  const MOVE_THRESHOLD = 0.08; 
+  const isStill = deltaYaw <= MOVE_THRESHOLD && deltaPitch <= MOVE_THRESHOLD;
+
+  const middleJoints = [lm[9], lm[10], lm[11], lm[12]];
+  const minX = Math.min(...middleJoints.map(p => p.x));
+  const maxX = Math.max(...middleJoints.map(p => p.x));
+  const minY = Math.min(...middleJoints.map(p => p.y));
+  const maxY = Math.max(...middleJoints.map(p => p.y));
+
+  const spreadX = maxX - minX;
+  const spreadY = maxY - minY;
+
+  const baseLength = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y);
+  const normalizedSpreadX = spreadX / Math.max(baseLength, 0.001);
+  const normalizedSpreadY = spreadY / Math.max(baseLength, 0.001);
+
+  const SPREAD_THRESHOLD = 1.2; 
+  const isStraight = normalizedSpreadX < SPREAD_THRESHOLD && normalizedSpreadY < SPREAD_THRESHOLD;
+
+  if (isStill && isStraight) {
+    if (stationaryStartTime === null) {
+      stationaryStartTime = performance.now();
+    } else {
+      const elapsedStationary = performance.now() - stationaryStartTime;
+      if (elapsedStationary >= 5000) {
+        baseHandYaw = currentYaw;
+        baseHandPitch = currentPitch;
+        handState.neckYaw = 0;
+        handState.neckPitch = 0;
+        stationaryStartTime = null;
+        if (ctx) {
+          ctx.fillStyle = '#00e5ff';
+          for (const p of rawLm) {
+            ctx.beginPath(); ctx.arc(p.x * camOverlay.width, p.y * camOverlay.height, 5, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        return; 
+      }
+    }
+  } else {
+    stationaryStartTime = null;
+  }
+
+  // 📱 【スマホ画面デバッグ描画】
+  if (ctx) {
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 3;
+    const drawText = (text: string, x: number, y: number) => {
+      ctx.strokeText(text, x, y);
+      ctx.fillText(text, x, y);
+    };
+    drawText(`静止: ${isStill ? 'OK' : 'NG'} (揺れ: ${deltaYaw.toFixed(2)})`, 10, 30);
+    drawText(`直進: ${isStraight ? 'OK' : 'NG'} (ズレX: ${normalizedSpreadX.toFixed(2)} Y: ${normalizedSpreadY.toFixed(2)})`, 10, 50);
+    if (stationaryStartTime !== null) {
+      const time = ((performance.now() - stationaryStartTime) / 1000).toFixed(1);
+      drawText(`タイマー: ${time} 秒 / 5.0`, 10, 70);
+    } else {
+      drawText(`タイマー: -- 秒 / 5.0`, 10, 70);
+    }
+  }
+
+  lastRawYaw = currentYaw;
+  lastRawPitch = currentPitch;
+
   // 4. 基準からのズレを計算して動かす
   const YAW_GAIN = 1.8;
   const PITCH_GAIN = 1.8;
-
-  // ※ もし先ほどのテストで左右が逆だった場合は、 (currentYaw - baseHandYaw) の先頭にマイナス - をつけてください！
   const rawYaw = (currentYaw - baseHandYaw) * YAW_GAIN;
   const rawPitch = -(currentPitch - baseHandPitch) * PITCH_GAIN;
 
@@ -506,7 +580,7 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   handState.neckYaw = Math.max(-YAW_LIMIT, Math.min(YAW_LIMIT, rawYaw));
   handState.neckPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, rawPitch));
 
-  // デバッグ描画（準備完了後は緑色で表示）
+  // デバッグ描画
   if (ctx) {
     ctx.fillStyle = '#00ff88'; // Green
     for (const p of rawLm) {
