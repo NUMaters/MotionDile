@@ -506,6 +506,11 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 		payload["voteExtendUsed"] = gs.VoteExtendUsed
 		payload["voteExtendRequestPlayerIds"] = ids
 		payload["voteExtendRequiredCount"] = voteMajorityThreshold(n)
+		votes := gs.Votes
+		if votes == nil {
+			votes = map[string]string{}
+		}
+		payload["votes"] = votes
 	}
 	return payload
 }
