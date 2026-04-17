@@ -4,11 +4,17 @@ import (
 	"context"
 	"testing"
 
+	"agent/internal/compose"
 	"agent/internal/domain"
+	"agent/internal/infrastructure/openai"
+	"agent/internal/ops"
 )
 
 func TestHintUsecase_GenerateFallsBackWithoutOpenAIClient(t *testing.T) {
-	uc := NewHintUsecase(nil)
+	llmComposer := compose.NewLLMComposer(openai.Noop{})
+	templateComposer := compose.NewTemplateComposer()
+	historyStore := ops.NewMemoryHintHistoryStore()
+	uc := NewHintUsecase(llmComposer, templateComposer, historyStore)
 
 	resp, err := uc.Generate(context.Background(), domain.HintRequest{
 		RoomID:       "room-1",

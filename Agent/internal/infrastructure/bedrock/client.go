@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"agent/internal/llm"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -49,6 +51,11 @@ type claudeMessagesResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+}
+
+// Generate は llm.Client 実装。system + user を送り、生成テキストを返す。
+func (c *Client) Generate(ctx context.Context, input llm.PromptInput) (string, error) {
+	return c.ChatCompletion(ctx, input.System, input.User)
 }
 
 // ChatCompletion は system + user を送り、生成テキストを返す。
