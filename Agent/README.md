@@ -15,10 +15,14 @@ Agent/
 │   ├── infrastructure/openai/      # 任意: OpenAI Chat Completions（フォールバック用）
 │   │   └── client.go
 │   ├── interface/http/             # HTTP ハンドラ（インターフェース層）
-│   │   └── handler.go
+│   │   ├── handler.go              # POST /hint
+│   │   └── theme_handler.go        # POST /themes
+│   ├── compose/                    # プロンプト・候補・テンプレ合成
+│   ├── llm/                        # LLM クライアント抽象（PromptInput）
+│   ├── ops/                        # ヒント履歴（部屋単位）
 │   └── usecase/                    # ビジネスロジック（ユースケース層）
-│       ├── hint_usecase.go         # ヒント生成のメインロジック
-│       └── prompt.go              # プロンプトエンジニアリング
+│       ├── hint_usecase.go         # ヒント生成（LLM + テンプレフォールバック）
+│       └── theme_usecase.go        # 行動テーマ生成（POST /themes）
 ├── .env                            # 環境変数（AWS_REGION / BEDROCK_MODEL_ID 等）
 ├── go.mod
 └── go.sum
@@ -53,7 +57,7 @@ Agent Server (handler.go)
     │
     ▼
 usecase/hint_usecase.go
-    │ buildUserPrompt() でプレイヤー情報を整形
+    │ compose（LLM / テンプレ）でヒント文を生成
     ▼
 infrastructure/bedrock/client.go（優先）または openai/client.go
     │ ChatCompletion(system, user)
@@ -76,8 +80,11 @@ cd Agent
 export AWS_REGION=ap-northeast-1
 # 省略時は Claude 3 Haiku が既定（config.DefaultBedrockModel）
 
-# または OpenAI のみ: BEDROCK_DISABLED=1 と OPENAI_API_KEY
-go run ./cmd/server
+# ローカル開発（ホットリロード）— 推奨
+air -c .air.toml
+
+# 単発実行（Bedrock 無効で OpenAI のみ: BEDROCK_DISABLED=1 と OPENAI_API_KEY）
+# go run ./cmd/server
 ```
 
 ECS では Terraform が **`AWS_REGION`**・**`BEDROCK_MODEL_ID`** を渡し、タスクロールに **`bedrock:InvokeModel`** を付与する。
@@ -140,10 +147,10 @@ ECS では Terraform が **`AWS_REGION`**・**`BEDROCK_MODEL_ID`** を渡し、�
 
 | 変数 | 説明 | デフォルト |
 |------|------|-----------|
-| `AWS_REGION` | Bedrock を使うリージョン | (未設定なら Bedrock クライアントは作らない) |
+| `AWS_REGION` | Bedrock を使うリージョン | 未設定なら Bedrock クライアントは作らない |
 | `BEDROCK_MODEL_ID` | Bedrock のモデル ID | `AWS_REGION` のみある場合はコード既定で **Claude 3 Haiku** |
 | `BEDROCK_DISABLED` | `1` / `true` で Bedrock を使わない | 空 |
-| `OPENAI_API_KEY` | 任意: Bedrock が無いときの OpenAI | 空でよい |
+| `OPENAI_API_KEY` | 任意: Bedrock が無い／無効時の OpenAI（gpt-4o-mini） | 空ならヒント・テーマはテンプレ／ローカル抽選中心（開発可） |
 | `AGENT_PORT` | サーバーポート | `8091` |
 
 ## ゲームサーバーとの連携
@@ -151,5 +158,5 @@ ECS では Terraform が **`AWS_REGION`**・**`BEDROCK_MODEL_ID`** を渡し、�
 ゲームサーバー側で `AGENT_URL` 環境変数を設定:
 
 ```bash
-AGENT_URL=http://127.0.0.1:8091 go run ./cmd/server/main.go
+AGENT_URL=http://127.0.0.1:8091 air -c .air.toml
 ```

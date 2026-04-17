@@ -1,0 +1,24 @@
+#:schema https://json.schemastore.org/any.json
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/server ./cmd/server"
+  delay = 300
+  entrypoint = ["./tmp/server"]
+  exclude_dir = ["bin", "tmp"]
+  exclude_regex = ["_test.go"]
+  include_ext = ["go"]
+  log = "tmp/build-errors.log"
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true
+
+[screen]
+  clear_on_rebuild = false
+  keep_scroll = true

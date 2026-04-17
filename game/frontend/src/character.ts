@@ -113,6 +113,30 @@ function applyTintToMaterial(
   return clone;
 }
 
+/** 初回ロード直後に呼ぶ。退室・色クリア時に `restoreBaseMaterialsForTintReset` で元の見た目に戻す */
+const baseMaterialsForTintReset = new WeakMap<THREE.Mesh, THREE.Material[]>();
+
+export function captureBaseMaterialsForTintReset(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const clones = mats.filter(Boolean).map(m => (m as THREE.Material).clone());
+    baseMaterialsForTintReset.set(mesh, clones);
+  });
+}
+
+export function restoreBaseMaterialsForTintReset(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const snap = baseMaterialsForTintReset.get(mesh);
+    if (!snap?.length) return;
+    const next = snap.map(m => m.clone());
+    mesh.material = next.length === 1 ? next[0] : next;
+  });
+}
+
 export function tintModel(root: THREE.Object3D, hexColor: string): void {
   if (!hexColor) return;
   const tint = new THREE.Color(hexColor);

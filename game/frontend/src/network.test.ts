@@ -51,7 +51,11 @@ vi.mock('./screens', () => ({
   startVoting: vi.fn(),
   showResults: vi.fn(),
   setVoteCallback: vi.fn(),
+  setVoteExtendRequestCallback: vi.fn(),
+  applyVoteExtendServerPayload: vi.fn(),
+  updateVotingDeadlineFromServer: vi.fn(),
   getPlayerRole: vi.fn(() => ''),
+  applyVoteLockFromServer: vi.fn(),
 }));
 
 vi.mock('./name-labels', () => ({

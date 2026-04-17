@@ -77,14 +77,27 @@
       <div class="voting-panel">
         <h2 class="voting-title"><span id="voting-icon" /> 投票タイム</h2>
         <p class="voting-lead">色つきのワニを思い出して、怪しい人に投票しよう</p>
-        <div id="vote-timer" class="vote-timer">20</div>
+        <div class="vote-timer-row">
+          <div id="vote-timer" class="vote-timer">20</div>
+          <span
+            id="vote-extend-pop"
+            class="vote-extend-pop"
+            hidden
+            role="status"
+            aria-live="polite"
+            aria-hidden="true"
+          >+10</span>
+        </div>
       </div>
       <div id="vote-list" />
+      <p id="vote-extend-status" class="vote-extend-status" aria-live="polite" />
+      <button id="btn-vote-extend" type="button" class="btn-vote-extend">時間延長</button>
       <button id="btn-vote-confirm" type="button">投票する</button>
     </div>
 
     <!-- Results Screen -->
     <div id="screen-results" class="screen-overlay screen-results-root hidden">
+      <div id="result-confetti-layer" class="result-confetti-layer" aria-hidden="true" />
       <div class="result-shell">
         <p class="result-kicker result-anim">試合結果</p>
         <div id="result-title" class="result-title result-anim" />
@@ -124,6 +137,15 @@
 
     <div id="cam-preview">
       <video id="cam-video" autoplay playsinline muted />
+      <img
+        id="cam-hand-guide"
+        src="/hand-guide.png"
+        width="320"
+        height="240"
+        alt=""
+        decoding="async"
+        hidden
+      />
       <canvas id="cam-overlay" />
     </div>
 

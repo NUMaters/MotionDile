@@ -3,10 +3,10 @@ package ws
 import (
 	"context"
 	cryptorand "crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"log"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"os"
@@ -28,7 +28,6 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 2048
-
 )
 
 type gatewayMessage struct {
@@ -188,10 +187,19 @@ func (g *Gateway) Handle(c *gin.Context) {
 	g.readPump(client)
 }
 
+// shouldRemovePlayerOnSocketClose は待機ロビーのみ true。対戦・カウントダウン・投票・結果中に
+// WebSocket が切れても REST の部屋メンバーは残し、同じ playerId で再参加できるようにする。
+func shouldRemovePlayerOnSocketClose(phase entity.GamePhase) bool {
+	return phase == entity.PhaseWaiting || phase == ""
+}
+
 func (g *Gateway) readPump(client *Client) {
 	defer func() {
 		g.unregister(client)
-		_, _ = g.usecase.Leave(context.Background(), client.roomID, client.playerID)
+		gs, err := g.usecase.GetGameState(context.Background(), client.roomID)
+		if err == nil && shouldRemovePlayerOnSocketClose(gs.Phase) {
+			_, _ = g.usecase.Leave(context.Background(), client.roomID, client.playerID)
+		}
 		_ = client.conn.Close()
 		go g.checkGameTransition(client.roomID)
 	}()
@@ -213,6 +221,8 @@ func (g *Gateway) readPump(client *Client) {
 			g.handleMove(client, msg.Payload)
 		case "vote":
 			g.handleVote(client, msg.Payload)
+		case "vote_extend":
+			g.handleVoteExtend(client)
 		case "landmarks":
 			g.handleLandmarks(client, msg.Payload)
 		}
@@ -279,6 +289,97 @@ func (g *Gateway) handleVote(client *Client, raw json.RawMessage) {
 	if quorum > 0 && len(gs.Votes) >= quorum {
 		go g.finishVoting(client.roomID)
 	}
+}
+
+const voteExtendExtraMs int64 = 10_000
+
+// voteMajorityThreshold は過半数に必要な人数（⌊n/2⌋+1）。例: 5→3, 4→3, 3→2, 2→2, 1→1
+func voteMajorityThreshold(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	return n/2 + 1
+}
+
+func (g *Gateway) handleVoteExtend(client *Client) {
+	gs, err := g.usecase.GetGameState(context.Background(), client.roomID)
+	if err != nil || gs.Phase != entity.PhaseVoting {
+		return
+	}
+	if gs.VoteExtendUsed {
+		g.broadcastVoteExtendUpdate(client.roomID, gs, false)
+		return
+	}
+	if len(gs.RoundPlayerIDs) > 0 && !playerIDInList(client.playerID, gs.RoundPlayerIDs) {
+		return
+	}
+	for _, id := range gs.VoteExtendRequestPlayerIDs {
+		if id == client.playerID {
+			return
+		}
+	}
+	gs.VoteExtendRequestPlayerIDs = append(gs.VoteExtendRequestPlayerIDs, client.playerID)
+	sort.Strings(gs.VoteExtendRequestPlayerIDs)
+
+	n := len(gs.RoundPlayerIDs)
+	if n == 0 {
+		n = g.roomClientCount(client.roomID)
+	}
+	required := voteMajorityThreshold(n)
+	applied := false
+	if len(gs.VoteExtendRequestPlayerIDs) >= required {
+		gs.VoteExtendUsed = true
+		gs.VoteEnd += voteExtendExtraMs
+		gs.VoteExtendRequestPlayerIDs = nil
+		applied = true
+		g.scheduleVotingEnd(client.roomID, gs.VoteEnd)
+	}
+	_ = g.usecase.SetGameState(context.Background(), client.roomID, gs)
+	g.broadcastVoteExtendUpdate(client.roomID, gs, applied)
+}
+
+func (g *Gateway) broadcastVoteExtendUpdate(roomID string, gs entity.GameState, applied bool) {
+	n := len(gs.RoundPlayerIDs)
+	if n == 0 {
+		n = g.roomClientCount(roomID)
+	}
+	req := gs.VoteExtendRequestPlayerIDs
+	if req == nil {
+		req = []string{}
+	}
+	payload := map[string]interface{}{
+		"voteEnd":          gs.VoteEnd,
+		"voteExtendUsed":   gs.VoteExtendUsed,
+		"requestPlayerIds": req,
+		"requestCount":     len(req),
+		"requiredCount":    voteMajorityThreshold(n),
+		"roundPlayerCount": n,
+		"applied":          applied,
+	}
+	g.broadcastToRoom(roomID, genericEnvelope{Type: "vote_extend_update", Payload: payload})
+}
+
+func (g *Gateway) scheduleVotingEnd(roomID string, voteEndUnixMs int64) {
+	g.cancelGameTimer(roomID)
+	rem := time.Until(time.UnixMilli(voteEndUnixMs))
+	if rem < 0 {
+		rem = 0
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	g.gameMu.Lock()
+	g.gameCtxs[roomID] = &roomGameCtx{cancel: cancel}
+	g.gameMu.Unlock()
+
+	go func() {
+		select {
+		case <-time.After(rem):
+			g.gameMu.Lock()
+			delete(g.gameCtxs, roomID)
+			g.gameMu.Unlock()
+			g.finishVoting(roomID)
+		case <-ctx.Done():
+		}
+	}()
 }
 
 func (g *Gateway) handleLandmarks(client *Client, raw json.RawMessage) {
@@ -379,12 +480,13 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 			dn = "プレイヤー"
 		}
 		playerList = append(playerList, map[string]string{
+			"playerId":    p.PlayerID,
 			"displayName": dn,
 			"color":       p.Color,
 		})
 	}
 	r := g.rules
-	return map[string]interface{}{
+	payload := map[string]interface{}{
 		"phase":        gs.Phase,
 		"playerCount":  gs.PlayerCount,
 		"countdownEnd": gs.CountdownEnd,
@@ -402,6 +504,35 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 			"resultDurationSec": int(r.ResultDuration / time.Second),
 		},
 	}
+	// 再接続クライアントが game_start を受け取れなくても UI を復元できるよう付与
+	if gs.EnemyPlayerID != "" {
+		payload["enemyPlayerId"] = gs.EnemyPlayerID
+	}
+	if gs.AllyTheme != "" {
+		payload["allyTheme"] = gs.AllyTheme
+	}
+	if gs.EnemyTheme != "" {
+		payload["enemyTheme"] = gs.EnemyTheme
+	}
+	if gs.Phase == entity.PhaseVoting {
+		n := len(gs.RoundPlayerIDs)
+		if n == 0 {
+			n = g.roomClientCount(roomID)
+		}
+		ids := gs.VoteExtendRequestPlayerIDs
+		if ids == nil {
+			ids = []string{}
+		}
+		payload["voteExtendUsed"] = gs.VoteExtendUsed
+		payload["voteExtendRequestPlayerIds"] = ids
+		payload["voteExtendRequiredCount"] = voteMajorityThreshold(n)
+		votes := gs.Votes
+		if votes == nil {
+			votes = map[string]string{}
+		}
+		payload["votes"] = votes
+	}
+	return payload
 }
 
 func (g *Gateway) broadcastGameState(roomID string, gs entity.GameState) {
@@ -513,7 +644,11 @@ func (g *Gateway) startGame(roomID string) {
 	}
 	enemyID := roundPlayerIDs[idx]
 
-	allyTheme, enemyTheme := usecase.PickThemes()
+	allyTheme, enemyTheme, err := g.usecase.GenerateThemes(context.Background(), roomID, len(roundPlayerIDs))
+	if err != nil {
+		log.Printf("[ws] theme generation error for room %s: %v", roomID, err)
+		return
+	}
 
 	now := time.Now()
 	gd := g.rules.GameDuration
@@ -568,15 +703,24 @@ func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
 	for {
 		select {
 		case <-hintTicker.C:
+			// GenerateHint は Agent 呼び出しで数秒かかることがある。同期で待つと gameTimer と同時発火時に
+			// 対戦終了→投票開始（vote_start）が遅延するため、ヒントだけ別ゴルーチンへ逃がす。
 			hintNum++
-			log.Printf("[ws] generating hint #%d for room %s", hintNum, roomID)
-			hint, err := g.usecase.GenerateHint(context.Background(), roomID, hintNum, g.getRoomLandmarks(roomID))
-			if err != nil {
-				log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
-			} else {
-				log.Printf("[ws] broadcasting hint #%d to room %s (len=%d)", hintNum, roomID, len(hint.Text))
+			n := hintNum
+			go func() {
+				log.Printf("[ws] generating hint #%d for room %s", n, roomID)
+				hint, err := g.usecase.GenerateHint(context.Background(), roomID, n, g.getRoomLandmarks(roomID))
+				if err != nil {
+					log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
+					return
+				}
+				gs, err := g.usecase.GetGameState(context.Background(), roomID)
+				if err != nil || gs.Phase != entity.PhasePlaying {
+					return
+				}
+				log.Printf("[ws] broadcasting hint #%d to room %s (len=%d)", n, roomID, len(hint.Text))
 				g.broadcastToRoom(roomID, genericEnvelope{Type: "hint", Payload: hint})
-			}
+			}()
 		case <-gameTimer.C:
 			g.gameMu.Lock()
 			delete(g.gameCtxs, roomID)
@@ -596,6 +740,8 @@ func (g *Gateway) startVoting(roomID string) {
 	gs.Phase = entity.PhaseVoting
 	gs.VoteEnd = now.Add(vd).UnixMilli()
 	gs.Votes = make(map[string]string)
+	gs.VoteExtendUsed = false
+	gs.VoteExtendRequestPlayerIDs = nil
 	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
 
 	snapshot, _ := g.usecase.Snapshot(context.Background(), roomID)
@@ -625,21 +771,7 @@ func (g *Gateway) startVoting(roomID string) {
 		},
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	g.gameMu.Lock()
-	g.gameCtxs[roomID] = &roomGameCtx{cancel: cancel}
-	g.gameMu.Unlock()
-
-	go func() {
-		select {
-		case <-time.After(vd):
-			g.gameMu.Lock()
-			delete(g.gameCtxs, roomID)
-			g.gameMu.Unlock()
-			g.finishVoting(roomID)
-		case <-ctx.Done():
-		}
-	}()
+	g.scheduleVotingEnd(roomID, gs.VoteEnd)
 }
 
 func (g *Gateway) finishVoting(roomID string) {
@@ -661,17 +793,40 @@ func (g *Gateway) finishVoting(roomID string) {
 
 	go func() {
 		time.Sleep(g.rules.ResultDuration)
-		g.resetGame(roomID)
+		g.dissolveRoomAfterGame(roomID)
 	}()
 }
 
-func (g *Gateway) resetGame(roomID string) {
-	gs := entity.GameState{
-		Phase:       entity.PhaseWaiting,
-		PlayerCount: g.roomClientCount(roomID),
+// dissolveRoomAfterGame は試合終了（結果表示時間経過後）に部屋を削除し、接続中のクライアントを切断する。
+func (g *Gateway) dissolveRoomAfterGame(roomID string) {
+	g.cancelGameTimer(roomID)
+
+	g.mu.RLock()
+	clients := g.rooms[roomID]
+	list := make([]*Client, 0, len(clients))
+	for c := range clients {
+		list = append(list, c)
 	}
-	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
-	g.broadcastGameState(roomID, gs)
+	g.mu.RUnlock()
+
+	if len(list) > 0 {
+		g.broadcastToRoom(roomID, genericEnvelope{
+			Type:    "room_closed",
+			Payload: map[string]string{"reason": "game_finished"},
+		})
+	}
+
+	if err := g.usecase.DeleteRoom(context.Background(), roomID); err != nil {
+		log.Printf("[ws] DeleteRoom %s: %v", roomID, err)
+	}
+
+	g.landmarksMu.Lock()
+	delete(g.landmarks, roomID)
+	g.landmarksMu.Unlock()
+
+	for _, c := range list {
+		_ = c.conn.Close()
+	}
 }
 
 func (g *Gateway) broadcastSnapshot(roomID string, snapshot entity.RoomSnapshot) {
@@ -730,17 +885,17 @@ func (g *Gateway) sendToClientRaw(client *Client, envelope genericEnvelope) {
 	}
 }
 
-// uniformCryptoIndex は [0, n) の一様な整数を crypto/rand で返す。失敗時は ok=false。
+// uniformCryptoIndex は [0, n) の一様な整数を crypto/rand.Int で返す（単純な % より偏りがない）。
+// 失敗時は ok=false。
 func uniformCryptoIndex(n int) (idx int, ok bool) {
 	if n <= 0 {
 		return 0, false
 	}
-	var b [8]byte
-	if _, err := cryptorand.Read(b[:]); err != nil {
+	v, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(n)))
+	if err != nil {
 		return 0, false
 	}
-	u := binary.LittleEndian.Uint64(b[:])
-	return int(u % uint64(n)), true
+	return int(v.Int64()), true
 }
 
 func roundPlayerIDSet(ids []string) map[string]bool {

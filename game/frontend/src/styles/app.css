@@ -114,7 +114,7 @@ body { position: relative; }
   transform: translateY(-50%) scale(0.94);
 }
 
-/* コンパス（プレイ中のみ表示・JS）：標準＝左上 / 左右反転時＝右上 */
+/* コンパス（対戦中・マッチメイキング待機中に表示・JS）：標準＝左上 / 左右反転時＝右上 */
 .game-compass {
   position: fixed;
   top: max(12px, env(safe-area-inset-top, 0px));
@@ -830,11 +830,76 @@ body { position: relative; }
 #screen-voting .voting-title { font-size: 24px; color: #f0c040; margin-bottom: 8px; font-weight: 800; display: flex; align-items: center; justify-content: center; gap: 6px; }
 #screen-voting .voting-title svg { flex-shrink: 0; }
 #screen-voting .voting-lead { font-size: 15px; color: #8b949e; line-height: 1.5; margin-bottom: 4px; }
-#screen-voting .vote-timer { font-size: 22px; color: #f85149; font-weight: 800; margin-top: 6px; }
+.vote-timer-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+  min-height: 1.35em;
+}
+#screen-voting .vote-timer { font-size: 22px; color: #f85149; font-weight: 800; margin-top: 0; }
+/* 延長適用時：カウント横に +10 が一瞬ポップ */
+.vote-extend-pop {
+  font-size: 20px;
+  font-weight: 900;
+  color: #56d364;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  text-shadow: 0 0 12px rgba(86, 211, 100, 0.65);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.vote-extend-pop[hidden] {
+  display: none !important;
+}
+.vote-extend-pop.vote-extend-pop--play {
+  display: inline-block !important;
+  animation: voteExtendPlusPop 0.62s cubic-bezier(0.34, 1.35, 0.64, 1) forwards;
+}
+@keyframes voteExtendPlusPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.35) translateY(6px);
+  }
+  28% {
+    opacity: 1;
+    transform: scale(1.18) translateY(0);
+  }
+  48% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.92) translateY(-8px);
+  }
+}
+@keyframes voteExtendPlusPopReduced {
+  0%, 100% { opacity: 0; transform: none; }
+  35%, 65% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vote-extend-pop.vote-extend-pop--play {
+    animation: voteExtendPlusPopReduced 0.45s ease forwards;
+  }
+}
 #vote-list {
   display: flex; flex-wrap: wrap; gap: 14px; justify-content: center;
   margin-top: 16px; max-width: min(96vw, 520px);
   max-height: min(52vh, 420px); overflow-y: auto; justify-content: center;
+}
+#vote-list.vote-list--locked {
+  pointer-events: none;
+  user-select: none;
+}
+#vote-list.vote-list--locked .vote-card {
+  cursor: default;
+  opacity: 0.88;
+}
+#vote-list.vote-list--locked .vote-card.selected {
+  opacity: 1;
+  border-color: #f85149;
 }
 .vote-card {
   width: 156px; padding: 10px 8px 12px; border-radius: 14px;
@@ -860,6 +925,20 @@ body { position: relative; }
   font-size: 52px; line-height: 1;
 }
 .vote-card .vote-name { font-size: 14px; font-weight: 700; color: #e6edf3; word-break: break-word; line-height: 1.25; max-width: 140px; }
+#vote-extend-status {
+  font-size: 13px; color: #8b949e; text-align: center; margin: 10px 12px 0;
+  max-width: min(92vw, 400px); line-height: 1.45;
+}
+
+#btn-vote-extend {
+  margin-top: 10px; padding: 11px 22px; border: 2px solid #388bfd; border-radius: 12px;
+  background: rgba(56, 139, 253, 0.12); color: #58a6ff; font-size: 15px; font-weight: 700;
+  cursor: pointer; transition: background .15s, transform .1s;
+}
+#btn-vote-extend:disabled {
+  opacity: 0.45; cursor: not-allowed; border-color: #30363d; color: #8b949e;
+}
+#btn-vote-extend:not(:disabled):active { transform: scale(0.98); }
 #btn-vote-confirm {
   margin-top: 16px; padding: 14px 40px; border: none; border-radius: 14px;
   background: linear-gradient(180deg, #ff6b6b, #f85149);
@@ -874,8 +953,11 @@ body { position: relative; }
 #btn-vote-confirm.active:active { transform: scale(0.97); }
 
 /* --- Results screen（編集寄りのタイポ＋ガラスパネル） --- */
+/* `position: relative` だと .screen-overlay の fixed 全画面が無効になり、キャンバスと二分割表示になる（特に iOS Safari） */
 #screen-results.screen-results-root {
-  z-index: 85;
+  position: fixed;
+  inset: 0;
+  z-index: 95;
   min-height: 100dvh;
   max-height: 100dvh;
   overflow-y: auto;
@@ -892,7 +974,33 @@ body { position: relative; }
     rgba(8, 10, 14, 0.94);
 }
 
+/* 紙吹雪（結果パネルより背面。pointer-events なし） */
+.result-confetti-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.result-confetti-piece {
+  position: absolute;
+  will-change: transform;
+  opacity: 0.96;
+  box-shadow: 0 0 1px rgba(255, 255, 255, 0.2);
+  animation: resultConfettiDrop var(--dur, 3s) linear var(--delay, 0s) forwards;
+}
+@keyframes resultConfettiDrop {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate3d(var(--drift, 0px), 125vh, 0) rotate(var(--rot-end, 720deg));
+  }
+}
+
 #screen-results .result-shell {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 392px;
   margin: 0 auto;
@@ -1144,12 +1252,33 @@ body { position: relative; }
   right: auto;
   left: max(2px, env(safe-area-inset-left, 0px));
 }
-#cam-video, #cam-overlay {
+#cam-video, #cam-overlay, #cam-hand-guide {
   position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   object-fit: cover;
 }
-#cam-overlay { pointer-events: none; }
+/* 黒背景のガイドPNGをカメラ映像の上に重ねる（黒は screen で透過に近づける）。黄緑トーン＋ opacity は JS でフェード */
+#cam-hand-guide {
+  object-fit: contain;
+  z-index: 1;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 1;
+  transition: opacity 0.38s ease-in-out;
+  filter: sepia(1) saturate(2.4) hue-rotate(58deg) brightness(1.12) contrast(1.05);
+}
+#cam-hand-guide[hidden] {
+  display: none !important;
+}
+/* 左右反転ボタン時はガイド画像もカメラ枠内で水平反転（映像・ランドマークは従来どおり） */
+.game-shell--ui-mirrored #cam-hand-guide {
+  transform: scaleX(-1);
+  transform-origin: center center;
+}
+#cam-overlay {
+  z-index: 2;
+  pointer-events: none;
+}
 
 /* ─── CSS2DRenderer overlay ─── */
 #label-renderer {

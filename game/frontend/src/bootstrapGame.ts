@@ -24,25 +24,30 @@ import { initInput, getInputVector, joystick, keys, manualMouthOpen, consumeAtta
 import {
   handState, smoothNeckYaw, smoothNeckPitch,
   updateHandTracking, applyHeadTracking,
-  loadHandControlModel, activateSensorsFromUserGesture, registerSensorRetryOnWindowTap,
+  activateSensorsFromUserGesture, registerSensorRetryOnWindowTap,
 } from './hand-tracking';
 import { updateDeviceLook, getDeviceLookYawPitch, recenterDeviceLook } from './device-look';
 import {
   sampleTerrainHeight, sampleFlatFloorY, sampleMaterial002SinkOffset,
   canMoveOnWorld, loadWorldMap, getFlatWorldY, setFlatWorldY, hasWorldColliders,
-  clampToBoundary,
+  clampToBoundary, pickRandomSpawnPosition,
 } from './world';
 import {
   normalizeCharacterRoot, setupActions, setLocomotionWeights,
   loadBinaryWithXHR, gltfBasePath,
+  captureBaseMaterialsForTintReset,
 } from './character';
 import {
   initMultiplayer, sendLocalMove, updateRemotePlayers, cleanup as cleanupNetwork,
   setLocalModel, setRemoteModelTemplate, localPlayerColor,
   setOnGameEnd, clearRemotePlayers,
+  setJoinSpawnCallback, isMultiplayerSessionActive,
+  getLastJoinPeerXZ, getLastJoinMyPlayer, getPlayerId,
+  shouldAutoRejoinMultiplayer, resumeMultiplayerSessionAfterReload,
+  persistLastMultiplayerSpawnFromClient, getClientSpawnFallbackForActiveRoom,
 } from './network';
 import {
-  showScreen, initTutorial, updateMatchmaking, initMatchmakingPip,
+  showScreen, initTutorial, updateMatchmaking, initMatchmakingPip, getCurrentScreen,
 } from './screens';
 import { resetGameRulesFromConfig } from './game-rules';
 import { getStoredPlayerName, saveStoredPlayerName } from './player-names';
@@ -109,13 +114,17 @@ const compassNeedle = compassEl?.querySelector('.compass-needle') as SVGGElement
 
 function updateCompass(): void {
   if (!model || !compassEl) return;
-  const screen = (window as unknown as { __currentScreen?: string }).__currentScreen;
-  if (screen === 'game-hud') {
+  const screen = getCurrentScreen();
+  // 対戦中に加え、マッチメイキング待機中（ワールド操作可能）でも表示
+  const show = screen === 'game-hud' || screen === 'matchmaking';
+  if (show) {
     compassEl.classList.remove('hidden');
+    compassEl.setAttribute('aria-hidden', 'false');
     const deg = -(model.rotation.y * 180) / Math.PI;
     if (compassNeedle) compassNeedle.style.transform = `rotate(${deg}deg)`;
   } else {
     compassEl.classList.add('hidden');
+    compassEl.setAttribute('aria-hidden', 'true');
   }
 }
 lookResetBtn.addEventListener('pointerdown', (e) => {
@@ -423,6 +432,95 @@ function updateCamera() {
   sun.target.updateMatrixWorld();
 }
 
+/** 入室ランダムスポーン後・初回ロード時の三人称カメラ基準位置 */
+function syncInitialThirdPersonCamera(): void {
+  if (!model) return;
+  const initYaw = model.rotation.y;
+  const initFwdX = Math.sin(initYaw);
+  const initFwdZ = Math.cos(initYaw);
+  camera.position.set(
+    model.position.x - initFwdX * CAM_DISTANCE,
+    model.position.y + CAM_HEIGHT,
+    model.position.z - initFwdZ * CAM_DISTANCE,
+  );
+  camera.lookAt(
+    model.position.x + initFwdX * CAM_LOOK_AHEAD,
+    model.position.y + CAM_LOOK_HEIGHT,
+    model.position.z + initFwdZ * CAM_LOOK_AHEAD,
+  );
+}
+
+/**
+ * 部屋参加が完了したあと（REST 成功時）、地形メッシュとローカルモデルが揃うまで待って配置する。
+ * サーバが保持している最終座標（再接続時）を優先し、無ければクライアント退避値、最後にランダム。
+ */
+function trySpawnLocalPlayerAfterJoin(): void {
+  let frames = 0;
+  const step = (): void => {
+    frames++;
+    if (!isMultiplayerSessionActive()) {
+      if (frames < 120) requestAnimationFrame(step);
+      return;
+    }
+    if (!model || !hasWorldColliders()) {
+      if (frames < 480) requestAnimationFrame(step);
+      return;
+    }
+    let netMe = getLastJoinMyPlayer();
+    const hasXZ =
+      netMe && Number.isFinite(netMe.x) && Number.isFinite(netMe.z);
+    if (!hasXZ) {
+      const fb = getClientSpawnFallbackForActiveRoom();
+      if (fb) {
+        netMe = {
+          playerId: getPlayerId(),
+          x: fb.x,
+          y: netMe?.y ?? 0,
+          z: fb.z,
+          rotationY: fb.ry,
+          neckYaw: netMe?.neckYaw ?? 0,
+          neckPitch: netMe?.neckPitch ?? 0,
+          animation: netMe?.animation ?? 'Idle',
+          mouthOpenness: netMe?.mouthOpenness ?? 0,
+          color: netMe?.color ?? localPlayerColor,
+          updatedAt: netMe?.updatedAt ?? Date.now(),
+        };
+      }
+    }
+    if (netMe && Number.isFinite(netMe.x) && Number.isFinite(netMe.z)) {
+      model.position.x = netMe.x;
+      model.position.z = netMe.z;
+      if (typeof netMe.rotationY === 'number' && Number.isFinite(netMe.rotationY)) {
+        model.rotation.y = netMe.rotationY;
+      } else {
+        model.rotation.y = Math.random() * Math.PI * 2;
+      }
+    } else {
+      const pos = pickRandomSpawnPosition(playerFootOffset, {
+        scatterSeed: getPlayerId(),
+        avoidNear: getLastJoinPeerXZ(),
+      });
+      if (pos) {
+        model.position.x = pos.x;
+        model.position.z = pos.z;
+      } else {
+        model.position.x = 0;
+        model.position.z = 0;
+      }
+      model.rotation.y = Math.random() * Math.PI * 2;
+    }
+    normalizeCharacterRoot(model);
+    box.setFromObject(model);
+    playerFootOffset = Math.max(0.03, model.position.y - box.min.y);
+    alignModelToFlatWorld(true);
+    syncInitialThirdPersonCamera();
+    recenterDeviceLook();
+  };
+  requestAnimationFrame(step);
+}
+
+setJoinSpawnCallback(trySpawnLocalPlayerAfterJoin);
+
 // ─── Model loading ───
 let loadSettled = false;
 const loadSlowTimer = window.setTimeout(() => {
@@ -469,6 +567,8 @@ async function applyLoadedGltf(gltf: GLTF) {
   const template = cloneSkinned(model) as THREE.Group;
   setRemoteModelTemplate(template, gltf.animations);
 
+  captureBaseMaterialsForTintReset(model);
+
   console.log(`[applyLoadedGltf] localPlayerColor=${localPlayerColor}`);
   setLocalModel(model);
 
@@ -478,21 +578,21 @@ async function applyLoadedGltf(gltf: GLTF) {
   headBone = model.getObjectByName('head') ?? null;
   headBaseQuat = headBone ? headBone.quaternion.clone() : null;
 
-  const initYaw = model.rotation.y;
-  const initFwdX = Math.sin(initYaw);
-  const initFwdZ = Math.cos(initYaw);
-  camera.position.set(
-    model.position.x - initFwdX * CAM_DISTANCE,
-    model.position.y + CAM_HEIGHT,
-    model.position.z - initFwdZ * CAM_DISTANCE,
-  );
-  camera.lookAt(
-    model.position.x + initFwdX * CAM_LOOK_AHEAD,
-    model.position.y + CAM_LOOK_HEIGHT,
-    model.position.z + initFwdZ * CAM_LOOK_AHEAD,
-  );
+  syncInitialThirdPersonCamera();
 
   hideLoading();
+}
+
+/** 参加済みセッションからのリロード時、待機画面へ入ってそのままマルチ再接続 */
+async function maybeResumeMultiplayerAfterReload(): Promise<void> {
+  if (!shouldAutoRejoinMultiplayer()) return;
+  showScreen('matchmaking');
+  updateMatchmaking(1, null);
+  activateSensorsFromUserGesture({
+    onCameraFail: registerSensorRetryOnWindowTap,
+  });
+  const ok = await resumeMultiplayerSessionAfterReload();
+  if (!ok) showScreen('home');
 }
 
 async function loadModel() {
@@ -581,6 +681,7 @@ async function loadModel() {
 
     try {
       await applyLoadedGltf(gltf);
+      await maybeResumeMultiplayerAfterReload();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       showLoadError(`初期化エラー: ${msg}`);
@@ -637,23 +738,29 @@ btnJoin.addEventListener('click', () => {
 setOnGameEnd(resetLocalPlayer);
 
 getEl<HTMLElement>('btn-back-home').addEventListener('click', () => {
-  void cleanupNetwork();
+  void cleanupNetwork({ excludePreviousRoomFromAutoResolve: false });
   resetLocalPlayer();
   showScreen('home');
 });
 
 getEl<HTMLElement>('btn-matchmaking-home').addEventListener('click', () => {
-  void cleanupNetwork();
+  void cleanupNetwork({ excludePreviousRoomFromAutoResolve: false });
   resetLocalPlayer();
   showScreen('home');
 });
 
 void loadWorldMap(scene, ground, grid);
-void loadHandControlModel();
 void loadModel();
 
 window.addEventListener('beforeunload', () => {
-  cleanupNetwork();
+  if (model && isMultiplayerSessionActive()) {
+    persistLastMultiplayerSpawnFromClient({
+      x: model.position.x,
+      z: model.position.z,
+      ry: model.rotation.y,
+    });
+  }
+  cleanupNetwork({ excludePreviousRoomFromAutoResolve: false, notifyServerLeave: false });
 });
 
 if (import.meta.hot) {

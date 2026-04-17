@@ -11,7 +11,7 @@ import (
 	"waniar/game-backend/internal/infrastructure/memory"
 )
 
-func TestRoomUsecase_ResolveLobbyRoomGameInProgressRedirect(t *testing.T) {
+func TestRoomUsecase_ResolveLobbyRoomPreferredKeepsInProgressRoom(t *testing.T) {
 	ctx := context.Background()
 	repo := memory.NewRoomRepository()
 	u := NewRoomUsecase(repo, "", config.Rules{MaxPlayers: 10})
@@ -30,11 +30,11 @@ func TestRoomUsecase_ResolveLobbyRoomGameInProgressRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !redirected || reason != "game_in_progress" {
-		t.Fatalf("redirect/result mismatch: redirected=%v reason=%q", redirected, reason)
+	if redirected || reason != "" {
+		t.Fatalf("want no redirect: redirected=%v reason=%q", redirected, reason)
 	}
-	if id != "room-waiting" {
-		t.Fatalf("got %q want room-waiting", id)
+	if id != "room-playing" {
+		t.Fatalf("got %q want room-playing", id)
 	}
 }
 

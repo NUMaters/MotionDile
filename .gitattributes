@@ -1,1 +1,2 @@
+# Vitest 等のカバレッジ HTML はリポジトリに含めず、言語統計からも除外扱いにする
 coverage/** linguist-generated=true
