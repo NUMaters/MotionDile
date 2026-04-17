@@ -3,10 +3,10 @@ package ws
 import (
 	"context"
 	cryptorand "crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"log"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"os"
@@ -865,17 +865,17 @@ func (g *Gateway) sendToClientRaw(client *Client, envelope genericEnvelope) {
 	}
 }
 
-// uniformCryptoIndex は [0, n) の一様な整数を crypto/rand で返す。失敗時は ok=false。
+// uniformCryptoIndex は [0, n) の一様な整数を crypto/rand.Int で返す（単純な % より偏りがない）。
+// 失敗時は ok=false。
 func uniformCryptoIndex(n int) (idx int, ok bool) {
 	if n <= 0 {
 		return 0, false
 	}
-	var b [8]byte
-	if _, err := cryptorand.Read(b[:]); err != nil {
+	v, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(n)))
+	if err != nil {
 		return 0, false
 	}
-	u := binary.LittleEndian.Uint64(b[:])
-	return int(u % uint64(n)), true
+	return int(v.Int64()), true
 }
 
 func roundPlayerIDSet(ids []string) map[string]bool {
