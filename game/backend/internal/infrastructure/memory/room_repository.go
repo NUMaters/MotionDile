@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"sort"
 	"strings"
@@ -12,6 +13,9 @@ import (
 )
 
 var _ repository.RoomRepository = (*RoomRepository)(nil)
+
+// ErrVoteAlreadyCast は同一プレイヤーからの2回目以降の投票を拒否するときに返す。
+var ErrVoteAlreadyCast = errors.New("vote already cast")
 
 type roomState struct {
 	version int64
@@ -41,6 +45,10 @@ func (r *RoomRepository) Join(_ context.Context, roomID string, initial entity.P
 		if strings.TrimSpace(initial.DisplayName) == "" {
 			initial.DisplayName = existing.DisplayName
 		}
+		initial.X, initial.Y, initial.Z = existing.X, existing.Y, existing.Z
+		initial.RotationY = existing.RotationY
+		initial.NeckYaw = existing.NeckYaw
+		initial.NeckPitch = existing.NeckPitch
 	} else {
 		initial.Color = pickUnusedColor(room)
 		if strings.TrimSpace(initial.DisplayName) == "" {
@@ -84,7 +92,10 @@ func (r *RoomRepository) RemovePlayer(_ context.Context, roomID, playerID string
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	room := r.ensureRoom(roomID)
+	room, ok := r.rooms[roomID]
+	if !ok {
+		return entity.RoomSnapshot{RoomID: roomID, Version: 0, Players: []entity.PlayerState{}}, nil
+	}
 	delete(room.players, playerID)
 	room.version++
 	return snapshotFromRoom(roomID, room), nil
@@ -157,6 +168,9 @@ func (r *RoomRepository) CastVote(_ context.Context, roomID, voterID, votedForID
 	if room.game.Votes == nil {
 		room.game.Votes = make(map[string]string)
 	}
+	if _, exists := room.game.Votes[voterID]; exists {
+		return entity.GameState{}, ErrVoteAlreadyCast
+	}
 	room.game.Votes[voterID] = votedForID
 	gs := room.game
 	gs.PlayerCount = len(room.players)
@@ -186,6 +200,13 @@ func (r *RoomRepository) ListRoomIDs(_ context.Context) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func (r *RoomRepository) DeleteRoom(_ context.Context, roomID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.rooms, roomID)
+	return nil
 }
 
 func snapshotFromRoom(roomID string, room *roomState) entity.RoomSnapshot {

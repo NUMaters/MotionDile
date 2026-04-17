@@ -18,6 +18,10 @@ type GameState struct {
 	AllyTheme      string   `json:"allyTheme,omitempty"`
 	EnemyTheme     string   `json:"enemyTheme,omitempty"`
 	Votes          map[string]string `json:"votes,omitempty"`
+	// VoteExtendUsed は投票時間の +10 秒延長が既に 1 回適用されたか
+	VoteExtendUsed bool `json:"voteExtendUsed,omitempty"`
+	// VoteExtendRequestPlayerIDs は延長に賛成ボタンを押したプレイヤー ID（重複なし）
+	VoteExtendRequestPlayerIDs []string `json:"voteExtendRequestPlayerIds,omitempty"`
 	CountdownEnd  int64             `json:"countdownEnd,omitempty"`
 	GameEnd       int64             `json:"gameEnd,omitempty"`
 	VoteEnd       int64             `json:"voteEnd,omitempty"`

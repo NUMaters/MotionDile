@@ -14,6 +14,13 @@ import (
 
 const apiURL = "https://api.openai.com/v1/chat/completions"
 
+// Noop は API キー未設定時に使い、Generate が即エラーを返す。Usecase がテンプレート／ローカルフォールバックへ回す。
+type Noop struct{}
+
+func (Noop) Generate(ctx context.Context, input llm.PromptInput) (string, error) {
+	return "", fmt.Errorf("openai disabled")
+}
+
 type Client struct {
 	apiKey     string
 	httpClient *http.Client

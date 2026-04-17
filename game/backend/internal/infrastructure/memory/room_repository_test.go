@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"sort"
 	"testing"
@@ -118,6 +119,11 @@ func TestRoomRepository_GameStateVoteAndListRoomIDs(t *testing.T) {
 		t.Fatalf("vote not recorded: %+v", gs.Votes)
 	}
 
+	_, err = r.CastVote(ctx, "room-b", "p1", "p2")
+	if !errors.Is(err, ErrVoteAlreadyCast) {
+		t.Fatalf("second vote should be rejected, got err=%v", err)
+	}
+
 	ids, err := r.ListRoomIDs(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -155,6 +161,32 @@ func TestRoomRepository_RemovePlayer(t *testing.T) {
 	}
 	if len(snap.Players) != 1 {
 		t.Fatalf("players=%d", len(snap.Players))
+	}
+}
+
+func TestRoomRepository_DeleteRoom(t *testing.T) {
+	ctx := context.Background()
+	r := NewRoomRepository()
+	const room = "r-del"
+	if _, err := r.Join(ctx, room, entity.PlayerState{PlayerID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteRoom(ctx, room); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := r.ListRoomIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected no rooms, got %#v", ids)
+	}
+	snap, err := r.RemovePlayer(ctx, room, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Players) != 0 {
+		t.Fatalf("removed player on deleted room must not recreate players, got %+v", snap)
 	}
 }
 

@@ -1,13 +1,10 @@
 /// <reference types="vite/client" />
-import type { HandControlModel } from './types';
 
 // ─── Vite / アプリのベース URL（アセット解決用） ─────────────────────────────
 /** ルート相対の静的アセットを解決するためのベース URL（`import.meta.env.BASE_URL`） */
 const appBaseUrl = new URL(import.meta.env.BASE_URL || '/', window.location.origin);
 
 // ─── アセット URL ───────────────────────────────────────────────────────────
-/** 手制御パラメータ JSON（学習済み hand-control）の取得先 */
-export const HAND_MODEL_URL = new URL('models/hand-control-model.json', appBaseUrl).href;
 /** プレイ用ワニ GLB（`public/modeling/` 経由で配信される想定） */
 export const MODEL_URL = new URL('modeling/Wani_game.glb', appBaseUrl).href;
 
@@ -118,11 +115,27 @@ export const DEVICE_LOOK_TILT_GAIN = 1.35;
 /** 位置送信の最小間隔（ミリ秒）。負荷と滑らかさのバランス */
 export const MOVE_SEND_INTERVAL = 66;
 
-// ─── 手認識（MediaPipe） ────────────────────────────────────────────────────
-/** 手ランドマーク検出の最大間隔（ミリ秒）。短いほど追従が速い */
-export const HAND_DETECT_INTERVAL = 22;
-/** 特徴量の指数移動平均係数（0〜1。大きいほど素早く追従、小さいほどジャッカ抑制） */
-export const HAND_FEATURE_EMA_ALPHA = 0.38;
+// ─── 手認識（MediaPipe Hand Landmarker のみ・学習 JSON は使わない） ───────────
+/** 手ランドマーク検出の最大間隔（ミリ秒）。短いほど追従が速い（~60fps 相当） */
+export const HAND_DETECT_INTERVAL = 16;
+/** 口開き度（0〜1）への EMA。大きいほど素早く追従、小さいほど安定 */
+export const HAND_MOUTH_OUTPUT_SMOOTH = 0.48;
+/**
+ * 首用: 手首→中指先ベクトルから得たヨー／ピッチにかける EMA（ランドマークの微振動を抑える）
+ * 0〜1。大きいほど素早く追従
+ */
+export const HAND_AXIS_SMOOTH_ALPHA = 0.44;
+/** 口: 中指近位−先端 と 親指 方向ベクトルのなす角（ラジアン）を閉じた扱いにする閾値 */
+export const HAND_MOUTH_ANGLE_CLOSED = 0.28;
+/** 口: 上記の角を開いた扱いにする閾値 */
+export const HAND_MOUTH_ANGLE_OPEN = 0.85;
+/** 首ヨー／ピッチのゲイン（基準姿勢からの差に掛ける） */
+export const HAND_NECK_YAW_GAIN = 1.8;
+export const HAND_NECK_PITCH_GAIN = 1.8;
+export const HAND_NECK_YAW_LIMIT = 0.8;
+export const HAND_NECK_PITCH_LIMIT = 0.5;
+/** 手検出後、この時間（ms）経過してから首の「正面」基準を採る */
+export const HAND_CALIBRATION_WAIT_MS = 1000;
 /** 首（手追従）の `smoothToward` 係数。大きいほど頭が手に追従しやすい */
 export const HEAD_HAND_TRACK_SMOOTH = 12;
 
@@ -223,21 +236,6 @@ export const CLIP_NAMES = [
   'Walk_MouthOpen', 'Run_MouthOpen', 'Idle_MouthOpen',
   'Attack', 'TailWag',
 ];
-
-// ─── 手モデル未読み込み時のデフォルト（口・首のゲイン） ───────────────────────
-/** v2: 口は指の開き比（~1.0 グー … ~1.85 パー）、首は掌の法線（左右・上下） */
-export const DEFAULT_HAND_CONTROL_MODEL: HandControlModel = {
-  version: 2,
-  mouth: { closedCurl: 1.06, openCurl: 1.82, openThreshold: 0.42 },
-  neck: {
-    neutralTilt: 0,
-    yawGain: 1.12,
-    maxYaw: 0.72,
-    neutralPitchAngle: 0,
-    pitchGain: -1.45,
-    maxPitch: 0.55,
-  },
-};
 
 // ─── マルチプレイ用ボディ色付け（テクスチャ／ソリッドのブレンド） ─────────────
 /** テクスチャありメッシュでプレイヤー色を乗せるときのアルベドブレンド強度（高いほど色がはっきり） */

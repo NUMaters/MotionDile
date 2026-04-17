@@ -3,6 +3,10 @@ dist/
 coverage/
 # CMake 外付けビルド（compile_commands.json もここに出る）
 build/
+Agent/tmp/
+game/backend/tmp/
+Agent/server
+game/backend/server
 .DS_Store
 **/.DS_Store
 # 開発時に modeling からコピーされる（約20MB）。リポジトリには含めない
@@ -16,3 +20,4 @@ medea-pipeline/data/hand-dataset.json
 **/.env.*
 !.env.example
 !**/.env.example
+node_modules

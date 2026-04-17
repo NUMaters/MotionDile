@@ -6,12 +6,17 @@ import { applyServerGameRules, getGameRules, type GameRulesState } from './game-
 import { smoothToward } from './utils';
 import { scene } from './scene';
 import { composeNeckDeltaQuaternion } from './neck-sync';
-import { tintModel, setLocomotionWeights } from './character';
+import {
+  tintModel, setLocomotionWeights,
+  restoreBaseMaterialsForTintReset,
+} from './character';
 import { setMultiplayerStatus } from './hud';
 import {
   showScreen, getCurrentScreen,
   updateMatchmaking, updateMatchmakingPlayers, startGameHud, showHint,
-  startVoting, showResults, setVoteCallback, getPlayerRole,
+  startVoting, showResults, setVoteCallback, setVoteExtendRequestCallback,
+  applyVoteExtendServerPayload, updateVotingDeadlineFromServer, getPlayerRole,
+  applyVoteLockFromServer,
 } from './screens';
 import { setPlayerDisplayNamesFromSnapshot, setPlayerDisplayName, getJoinDisplayName, resolveDisplayName } from './player-names';
 import {
@@ -19,8 +24,104 @@ import {
 } from './name-labels';
 import { getWorldLandmarks } from './world';
 
-/** 参加中の部屋。空のときは未解決（次回 `resolve` で決定）。ゲーム終了・離脱時にクリアし URL からも `room` を外す */
-let activeRoomId = roomIdFromUrl;
+const LAST_ACTIVE_ROOM_KEY = 'waniar:last-active-room-id';
+/** 切断直前のローカル座標（リロード直後、サーバ値と併用） */
+const LAST_MP_SPAWN_KEY = 'waniar:last-mp-spawn';
+
+function readPersistedActiveRoomId(): string {
+  try {
+    return sessionStorage.getItem(LAST_ACTIVE_ROOM_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function persistActiveRoomId(id: string): void {
+  if (!id) return;
+  try {
+    sessionStorage.setItem(LAST_ACTIVE_ROOM_KEY, id);
+  } catch {
+    // private mode 等
+  }
+}
+
+function clearPersistedActiveRoomId(): void {
+  try {
+    sessionStorage.removeItem(LAST_ACTIVE_ROOM_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** ページ離脱前に呼ぶ。同じ部屋へ戻ったとき `trySpawn` のフォールバックに使う */
+export function persistLastMultiplayerSpawnFromClient(pos: { x: number; z: number; ry: number }): void {
+  const room = activeRoomId;
+  if (!room) return;
+  try {
+    sessionStorage.setItem(
+      LAST_MP_SPAWN_KEY,
+      JSON.stringify({ roomId: room, x: pos.x, z: pos.z, ry: pos.ry }),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function readLastMultiplayerSpawnForRoom(roomId: string): { x: number; z: number; ry: number } | null {
+  try {
+    const raw = sessionStorage.getItem(LAST_MP_SPAWN_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as { roomId?: string; x?: number; z?: number; ry?: number };
+    if (o.roomId !== roomId || !Number.isFinite(o.x) || !Number.isFinite(o.z)) return null;
+    return { x: o.x, z: o.z, ry: Number.isFinite(o.ry) ? (o.ry as number) : 0 };
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedMultiplayerSpawn(): void {
+  try {
+    sessionStorage.removeItem(LAST_MP_SPAWN_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** `trySpawn` 用。サーバスナップに座標が無いとき sessionStorage のフォールバック */
+export function getClientSpawnFallbackForActiveRoom(): { x: number; z: number; ry: number } | null {
+  return readLastMultiplayerSpawnForRoom(activeRoomId);
+}
+
+/** 一度でもマルチ参加に成功したら立てる。リロード後に `tryResume` できるようにする（明示退出でクリア） */
+const AUTO_REJOIN_KEY = 'waniar:auto-rejoin-multiplayer';
+
+function setAutoRejoinPending(): void {
+  try {
+    sessionStorage.setItem(AUTO_REJOIN_KEY, '1');
+  } catch {
+    // ignore
+  }
+}
+
+function clearAutoRejoinPending(): void {
+  try {
+    sessionStorage.removeItem(AUTO_REJOIN_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** リロード直後、保存済み部屋へ自動で `initMultiplayer` してよいか */
+export function shouldAutoRejoinMultiplayer(): boolean {
+  try {
+    return sessionStorage.getItem(AUTO_REJOIN_KEY) === '1' && !!readPersistedActiveRoomId();
+  } catch {
+    return false;
+  }
+}
+
+/** 参加中の部屋。空のときは未解決（次回 `resolve` で決定）。`?room=` またはリロード復帰用 sessionStorage */
+let activeRoomId = roomIdFromUrl || readPersistedActiveRoomId();
 
 /** `cleanup` 直前にいた部屋。次回 `resolve`（自動検索時）で除外し、別の待機ルームへ入る */
 let excludeRoomAfterLeave: string | null = null;
@@ -69,10 +170,16 @@ const playerId = (() => {
 
 export function getPlayerId(): string { return playerId; }
 
-/** モデルと色が揃ったときに呼ぶ。色が変わった場合のみ `tintModel` する */
+/** モデルと色が揃ったときに呼ぶ。色が変わった場合のみティント。空のときはスナップショットへ復元 */
 export function applyLocalPlayerColorTint(): void {
-  if (!localModel || !localPlayerColor) return;
+  if (!localModel) return;
+  if (!localPlayerColor) {
+    restoreBaseMaterialsForTintReset(localModel);
+    lastAppliedLocalTintHex = '';
+    return;
+  }
   if (lastAppliedLocalTintHex === localPlayerColor) return;
+  restoreBaseMaterialsForTintReset(localModel);
   tintModel(localModel, localPlayerColor);
   lastAppliedLocalTintHex = localPlayerColor;
 }
@@ -297,6 +404,7 @@ function applyRoomSnapshot(snapshot: RoomSnapshot) {
 
   for (const p of snapshot.players) {
     if (p.playerId === playerId) {
+      lastJoinMyPlayer = { ...p };
       if (p.color) {
         localPlayerColor = p.color;
         applyLocalPlayerColorTint();
@@ -359,6 +467,7 @@ async function resolveLobbyIfNeeded(): Promise<void> {
   const data = await res.json() as { ok?: boolean; roomId?: string; redirected?: boolean; reason?: string };
   if (!data.ok || !data.roomId) throw new Error('resolve: invalid response');
   activeRoomId = data.roomId;
+  persistActiveRoomId(activeRoomId);
   excludeRoomAfterLeave = null;
   stripRoomQueryFromUrl();
   if (data.redirected) {
@@ -371,6 +480,30 @@ async function resolveLobbyIfNeeded(): Promise<void> {
   }
 }
 
+/** 直近の REST 参加スナップショットから、他プレイヤーの XZ（重なり回避スポーン用） */
+let lastJoinPeerXZ: Array<{ x: number; z: number }> = [];
+
+export function getLastJoinPeerXZ(): Array<{ x: number; z: number }> {
+  return lastJoinPeerXZ;
+}
+
+/** REST 参加レスポンスの自分の `PlayerState`（サーバ割り当てスポーン座標をローカルに反映する） */
+let lastJoinMyPlayer: NetPlayerState | null = null;
+
+export function getLastJoinMyPlayer(): NetPlayerState | null {
+  return lastJoinMyPlayer;
+}
+
+/** `bootstrapGame` が登録。入室直後にランダムスポーン等（ワールド未準備時は側でリトライ） */
+let joinSpawnCallback: (() => void) | null = null;
+export function setJoinSpawnCallback(cb: (() => void) | null): void {
+  joinSpawnCallback = cb;
+}
+
+export function isMultiplayerSessionActive(): boolean {
+  return multiplayerSessionActive;
+}
+
 export async function joinRoom(): Promise<void> {
   const res = await fetch(`${GAME_API_BASE}/rooms/${encodeURIComponent(activeRoomId)}/players`, {
     method: 'POST',
@@ -381,13 +514,21 @@ export async function joinRoom(): Promise<void> {
   const payload = await res.json() as { snapshot?: unknown };
   if (payload.snapshot && isValidSnapshot(payload.snapshot)) {
     const me = payload.snapshot.players.find(p => p.playerId === playerId);
+    lastJoinMyPlayer = me ?? null;
     if (import.meta.env.DEV) console.log(`[joinRoom] myColor=${me?.color}, model=${!!localModel}, playerId=${playerId}`);
     if (me?.color) {
       localPlayerColor = me.color;
       applyLocalPlayerColorTint();
     }
+    lastJoinPeerXZ = payload.snapshot.players
+      .filter(p => p.playerId !== playerId)
+      .map(p => ({ x: p.x, z: p.z }));
     applyRoomSnapshot(payload.snapshot);
+  } else {
+    lastJoinPeerXZ = [];
+    lastJoinMyPlayer = null;
   }
+  joinSpawnCallback?.();
 }
 
 export async function leaveRoom(): Promise<void> {
@@ -442,8 +583,14 @@ export function connectGameSocket(): void {
         case 'vote_start':
           handleVoteStart(envelope.payload as Record<string, unknown>);
           break;
+        case 'vote_extend_update':
+          handleVoteExtendUpdate(envelope.payload as Record<string, unknown>);
+          break;
         case 'vote_result':
           handleVoteResult(envelope.payload as Record<string, unknown>);
+          break;
+        case 'room_closed':
+          handleRoomClosed();
           break;
       }
     } catch (err) {
@@ -483,14 +630,81 @@ function sendVote(votedFor: string): void {
   gameSocket.send(JSON.stringify({ type: 'vote', payload: { votedFor } }));
 }
 
+function sendVoteExtend(): void {
+  if (!gameSocket || gameSocket.readyState !== WebSocket.OPEN) return;
+  gameSocket.send(JSON.stringify({ type: 'vote_extend' }));
+}
+
 let currentRole = 'citizen';
+
+/** 空文字は falsy の `|| 'waiting'` にすると誤って待機扱いになるため、非空文字列のみ phase とする */
+function phaseFromPayload(raw: unknown): string {
+  if (typeof raw === 'string' && raw.length > 0) return raw;
+  return 'waiting';
+}
 
 function handleGameState(payload: Record<string, unknown>): void {
   applyServerGameRules(payload.rules as Partial<GameRulesState> | undefined);
-  const phase = payload.phase as string || 'waiting';
+  const phase = phaseFromPayload(payload.phase);
   const playerCount = (payload.playerCount as number) || 0;
   const countdownEnd = (payload.countdownEnd as number) || 0;
-  const players = (payload.players as { displayName: string; color: string }[]) || [];
+  const players = (payload.players as { displayName: string; color: string; playerId?: string }[]) || [];
+
+  // 再接続時は game_start が再送されないため、最初の game_state だけで HUD / 投票 UI を復元する
+  if (phase === 'playing') {
+    const screen = getCurrentScreen();
+    if (screen === 'matchmaking' || screen === 'home') {
+      const enemyPid = (payload.enemyPlayerId as string) || '';
+      const allyT = (payload.allyTheme as string) || undefined;
+      const enemyT = (payload.enemyTheme as string) || undefined;
+      const gameEndRaw = payload.gameEnd as number | undefined;
+      const gameEnd =
+        typeof gameEndRaw === 'number' && gameEndRaw > 0
+          ? gameEndRaw
+          : Date.now() + getGameRules().gameDurationSec * 1000;
+      const role = playerId === enemyPid ? 'enemy' : 'citizen';
+      const theme = role === 'enemy' ? enemyT : allyT;
+      currentRole = role;
+      startGameHud(gameEnd, role, theme);
+    }
+  }
+
+  if (phase === 'voting') {
+    const screenNow = getCurrentScreen();
+    if (screenNow !== 'voting') {
+      const ve = (payload.voteEnd as number) || 0;
+      const votePlayers = players.filter(
+        (p): p is { playerId: string; displayName?: string; color?: string } =>
+          typeof p.playerId === 'string' && p.playerId.length > 0,
+      );
+      if (ve > 0 && votePlayers.length > 0) {
+        for (const pl of votePlayers) {
+          if (pl.displayName) setPlayerDisplayName(pl.playerId, pl.displayName);
+        }
+        setVoteExtendRequestCallback(sendVoteExtend);
+        startVoting(ve, votePlayers, playerId, getVotePreviewModel());
+        setVoteCallback(sendVote);
+      }
+    }
+    const votes = payload.votes as Record<string, string> | undefined;
+    if (votes && typeof votes[playerId] === 'string' && votes[playerId]) {
+      applyVoteLockFromServer(votes[playerId]);
+    }
+    const ve = (payload.voteEnd as number) || 0;
+    if (ve) updateVotingDeadlineFromServer(ve);
+    if (payload.voteExtendUsed !== undefined || payload.voteExtendRequestPlayerIds) {
+      applyVoteExtendServerPayload(
+        {
+          voteEnd: ve || Date.now(),
+          voteExtendUsed: !!(payload.voteExtendUsed as boolean),
+          requestPlayerIds: (payload.voteExtendRequestPlayerIds as string[]) || [],
+          requiredCount: (payload.voteExtendRequiredCount as number) || 1,
+          roundPlayerCount: playerCount,
+        },
+        playerId,
+      );
+    }
+  }
 
   if (phase === 'waiting' || phase === 'countdown') {
     const screen = getCurrentScreen();
@@ -498,7 +712,8 @@ function handleGameState(payload: Record<string, unknown>): void {
       updateMatchmaking(playerCount, countdownEnd || null);
       if (players.length) updateMatchmakingPlayers(players);
     }
-    if (phase === 'waiting' && (screen === 'results' || screen === 'voting' || screen === 'game-hud')) {
+    // 対戦 HUD からの待機復帰のみホームへ（`voting` を含めると、投票終了直後の game_state が vote_result より先に届き結果画面を潰す）
+    if (phase === 'waiting' && screen === 'game-hud') {
       showScreen('home');
     }
   }
@@ -524,8 +739,29 @@ function handleVoteStart(payload: Record<string, unknown>): void {
   for (const pl of players) {
     if (pl.displayName) setPlayerDisplayName(pl.playerId, pl.displayName);
   }
+  setVoteExtendRequestCallback(sendVoteExtend);
   startVoting(voteEnd, players, playerId, getVotePreviewModel());
   setVoteCallback(sendVote);
+}
+
+function handleVoteExtendUpdate(payload: Record<string, unknown>): void {
+  const voteEnd = (payload.voteEnd as number) || Date.now();
+  updateVotingDeadlineFromServer(voteEnd);
+  applyVoteExtendServerPayload(
+    {
+      voteEnd,
+      voteExtendUsed: !!(payload.voteExtendUsed as boolean),
+      requestPlayerIds: (payload.requestPlayerIds as string[]) || [],
+      requiredCount: (payload.requiredCount as number) || 1,
+      roundPlayerCount: (payload.roundPlayerCount as number) || 0,
+    },
+    playerId,
+  );
+}
+
+function handleRoomClosed(): void {
+  if (!multiplayerSessionActive) return;
+  cleanup();
 }
 
 function handleVoteResult(payload: Record<string, unknown>): void {
@@ -545,8 +781,11 @@ function handleVoteResult(payload: Record<string, unknown>): void {
     allyTheme,
     enemyTheme,
   );
-  cleanup();
-  if (onGameEndCallback) onGameEndCallback();
+  // DOM を描いてから切断・セッション解除（同一ターン内の後続 game_state との競合を避ける）
+  queueMicrotask(() => {
+    cleanup();
+    if (onGameEndCallback) onGameEndCallback();
+  });
 }
 
 let onGameEndCallback: (() => void) | null = null;
@@ -593,6 +832,7 @@ export async function initMultiplayer(): Promise<void> {
     await joinRoom();
     multiplayerSessionActive = true;
     connectGameSocket();
+    setAutoRejoinPending();
   } catch (err) {
     multiplayerSessionActive = false;
     setMultiplayerStatus(activeRoomId ? `部屋: ${activeRoomId} 参加失敗` : '部屋への参加に失敗しました');
@@ -600,7 +840,33 @@ export async function initMultiplayer(): Promise<void> {
   }
 }
 
-export function cleanup(): void {
+/**
+ * モデル・ワールド準備後に呼ぶ。待機画面・センサー開始は呼び出し側で済ませたうえで接続だけ行う。
+ * @returns 接続に成功したとき true
+ */
+export async function resumeMultiplayerSessionAfterReload(): Promise<boolean> {
+  if (!shouldAutoRejoinMultiplayer()) return false;
+  await initMultiplayer();
+  if (!multiplayerSessionActive) {
+    clearAutoRejoinPending();
+    return false;
+  }
+  return true;
+}
+
+/**
+ * @param options.excludePreviousRoomFromAutoResolve
+ *   true（既定）: 次に部屋 ID 未指定で参加するとき、直前の部屋を自動検索から除外（**試合終了直後に別プールへ**する用途）。
+ *   false: 除外しない（**ホームに戻って再参加**するとき、まだ待機中なら同じロビーへ入れる）。
+ * @param options.notifyServerLeave
+ *   false: ページ離脱（リロード等）。`DELETE` を送らず、参加中だった部屋 ID を sessionStorage に残す（**対戦中のリロード後に同じ部屋へ復帰**しやすくする）。WebSocket は閉じる。
+ */
+export function cleanup(options?: {
+  excludePreviousRoomFromAutoResolve?: boolean;
+  notifyServerLeave?: boolean;
+}): void {
+  lastJoinPeerXZ = [];
+  lastJoinMyPlayer = null;
   multiplayerSessionActive = false;
   if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
   wsReconnectTimer = null;
@@ -609,11 +875,16 @@ export function cleanup(): void {
   gameSocket = null;
   clearRemotePlayers();
   localPlayerColor = '';
-  lastAppliedLocalTintHex = '';
+  applyLocalPlayerColorTint();
   const roomJustLeft = activeRoomId;
-  void leaveRoom();
-  if (roomJustLeft) excludeRoomAfterLeave = roomJustLeft;
+  const notifyLeave = options?.notifyServerLeave !== false;
+  if (notifyLeave) void leaveRoom();
+  const exclude = options?.excludePreviousRoomFromAutoResolve !== false;
+  if (roomJustLeft && exclude) excludeRoomAfterLeave = roomJustLeft;
   activeRoomId = '';
+  if (notifyLeave) clearPersistedActiveRoomId();
+  if (notifyLeave) clearPersistedMultiplayerSpawn();
+  if (notifyLeave) clearAutoRejoinPending();
   stripRoomQueryFromUrl();
   setMultiplayerStatus('未参加（次回「ゲーム参加」で部屋を検索します）');
 }

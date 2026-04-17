@@ -38,6 +38,7 @@ REST API は部屋/プレイヤー管理、WebSocket は部屋内の移動同期
 - 送信（server -> client, 同じ room へブロードキャスト）:
   - `{"type":"snapshot","payload":{"roomId":"r1","version":12,"players":[...]}}`
   - `vote_result` — 投票集計結果。`allyTheme` / `enemyTheme` にラウンドの市民・敵ミッション（結果画面で公開）、`citizensWin`、`enemyPlayerId`、`voteCounts` 等を含む
+  - `room_closed` — 結果表示時間（`WANIAR_RESULT_DURATION_SEC`）経過後、当該試合の部屋をサーバが削除し接続を閉じる直前に送る（`reason: game_finished`）。クライアントは未切断ならクリーンアップ用
   - `game_state` — `rules` に `maxPlayers` / `minPlayers` / 各種 `_Sec`（プレイ時間・マッチ前カウントダウン等）を含み、クライアントの表示と整合させられる
 
 ## リアルタイム効率化で意識した点
@@ -52,7 +53,7 @@ REST API は部屋/プレイヤー管理、WebSocket は部屋内の移動同期
 ```bash
 cd game/backend
 go mod tidy
-go run ./cmd/server
+air -c .air.toml
 ```
 
 デフォルトは `127.0.0.1:8090`。`GAME_BACKEND_ADDR` で変更できます。
