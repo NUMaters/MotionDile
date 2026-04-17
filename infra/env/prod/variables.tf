@@ -19,6 +19,11 @@ variable "aws_region" {
 variable "domain_name" {
   type        = string
   description = "Primary domain for CloudFront (same domain for frontend and API paths)."
+  default     = ""
+  validation {
+    condition     = var.enable_cloudfront == false || trimspace(var.domain_name) != ""
+    error_message = "domain_name must be set when enable_cloudfront is true."
+  }
 }
 
 variable "additional_domain_names" {
@@ -30,22 +35,17 @@ variable "additional_domain_names" {
 variable "route53_zone_id" {
   type        = string
   description = "Route53 hosted zone ID for domain validation and alias record."
+  default     = ""
+  validation {
+    condition     = var.enable_cloudfront == false || trimspace(var.route53_zone_id) != ""
+    error_message = "route53_zone_id must be set when enable_cloudfront is true."
+  }
 }
 
 variable "enable_cloudfront" {
   type        = bool
   description = "Whether to create CloudFront distribution and Route53 records."
   default     = true
-}
-
-variable "api_alb_dns_name" {
-  type        = string
-  description = "ALB DNS name created by AWS Load Balancer Controller (used as CloudFront origin for /api/*, /game-api/*, /ws, and /game-ws)."
-  default     = ""
-  validation {
-    condition     = var.enable_cloudfront == false || length(var.api_alb_dns_name) > 0
-    error_message = "api_alb_dns_name must be set when enable_cloudfront is true."
-  }
 }
 
 variable "vpc_cidr" {
@@ -69,7 +69,7 @@ variable "private_subnet_cidrs" {
 variable "kubernetes_version" {
   type        = string
   description = "EKS Kubernetes version."
-  default     = "1.29"
+  default     = "1.30"
 }
 
 variable "enable_current_caller_cluster_admin" {
@@ -121,13 +121,61 @@ variable "node_disk_size" {
 variable "s3_force_destroy" {
   type        = bool
   description = "Allow Terraform to delete the frontend bucket even if it contains objects."
-  default     = false
+  default     = true
 }
 
 variable "cloudfront_price_class" {
   type        = string
   description = "CloudFront price class."
   default     = "PriceClass_200"
+}
+
+variable "ecr_force_delete" {
+  type        = bool
+  description = "Allow Terraform to delete ECR repository even if images remain."
+  default     = true
+}
+
+variable "backend_namespace" {
+  type        = string
+  description = "Kubernetes namespace for the game backend."
+  default     = "waniar"
+}
+
+variable "backend_name" {
+  type        = string
+  description = "Kubernetes resource name for the game backend."
+  default     = "game-backend"
+}
+
+variable "backend_replicas" {
+  type        = number
+  description = "Replica count for the game backend deployment."
+  default     = 1
+}
+
+variable "backend_port" {
+  type        = number
+  description = "Container port exposed by game backend."
+  default     = 8090
+}
+
+variable "backend_service_port" {
+  type        = number
+  description = "Service port exposed inside the cluster."
+  default     = 80
+}
+
+variable "backend_image_uri" {
+  type        = string
+  description = "Explicit backend image URI. Leave empty to use ECR repository + backend_image_tag."
+  default     = ""
+}
+
+variable "backend_image_tag" {
+  type        = string
+  description = "Image tag used when backend_image_uri is empty."
+  default     = "latest"
 }
 
 variable "tags" {

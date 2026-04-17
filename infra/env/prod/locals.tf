@@ -24,4 +24,7 @@ locals {
       }
     }
   }
+
+  backend_image_uri = trimspace(var.backend_image_uri) != "" ? var.backend_image_uri : "${module.ecr_game_backend.repository_url}:${var.backend_image_tag}"
+  api_alb_dns_name  = try(kubernetes_ingress_v1.game_backend.status[0].load_balancer[0].ingress[0].hostname, "")
 }

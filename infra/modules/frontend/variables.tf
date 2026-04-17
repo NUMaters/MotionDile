@@ -29,10 +29,6 @@ variable "api_alb_dns_name" {
   type        = string
   description = "ALB DNS name for API/WebSocket origin (used for /api/*, /game-api/*, /ws, and /game-ws)."
   default     = ""
-  validation {
-    condition     = var.enable_cloudfront == false || length(var.api_alb_dns_name) > 0
-    error_message = "api_alb_dns_name must be set when enable_cloudfront is true."
-  }
 }
 
 variable "s3_force_destroy" {

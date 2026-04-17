@@ -8,6 +8,11 @@ output "cluster_endpoint" {
   description = "EKS cluster endpoint."
 }
 
+output "cluster_certificate_authority_data" {
+  value       = module.eks.cluster_certificate_authority_data
+  description = "EKS cluster certificate authority data."
+}
+
 output "oidc_provider" {
   value       = module.eks.oidc_provider
   description = "OIDC provider URL."

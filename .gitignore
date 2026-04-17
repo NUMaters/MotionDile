@@ -33,3 +33,9 @@ tfplan*
 # Terraform local vars (sensitive)
 terraform.tfvars
 **/terraform.tfvars
+
+# Temporary local IAM patch file (manual workaround)
+**/alb-extra-policy.json
+**/ecr-delete.json
+**/ecr-images.json
+**/s3-delete.json

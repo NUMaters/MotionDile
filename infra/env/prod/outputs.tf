@@ -27,3 +27,18 @@ output "ecr_game_backend" {
   value       = module.ecr_game_backend.repository_url
   description = "ECR repository for game backend image."
 }
+
+output "backend_image_uri" {
+  value       = local.backend_image_uri
+  description = "Resolved backend image URI used by Kubernetes deployment."
+}
+
+output "backend_namespace" {
+  value       = kubernetes_namespace_v1.backend.metadata[0].name
+  description = "Namespace where game backend is deployed."
+}
+
+output "api_alb_dns_name" {
+  value       = local.api_alb_dns_name
+  description = "ALB DNS name created from Kubernetes ingress."
+}

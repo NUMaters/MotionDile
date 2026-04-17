@@ -157,7 +157,7 @@ resource "aws_cloudfront_distribution" "main" {
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "https-only"
+      origin_protocol_policy = "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
@@ -218,7 +218,7 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   ordered_cache_behavior {
-    path_pattern           = "/game-ws"
+    path_pattern           = "/game-ws*"
     target_origin_id       = "alb-api"
     viewer_protocol_policy = "redirect-to-https"
     compress               = true
