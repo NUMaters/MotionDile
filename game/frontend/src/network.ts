@@ -389,6 +389,13 @@ export function getLastJoinPeerXZ(): Array<{ x: number; z: number }> {
   return lastJoinPeerXZ;
 }
 
+/** REST 参加レスポンスの自分の `PlayerState`（サーバ割り当てスポーン座標をローカルに反映する） */
+let lastJoinMyPlayer: NetPlayerState | null = null;
+
+export function getLastJoinMyPlayer(): NetPlayerState | null {
+  return lastJoinMyPlayer;
+}
+
 /** `bootstrapGame` が登録。入室直後にランダムスポーン等（ワールド未準備時は側でリトライ） */
 let joinSpawnCallback: (() => void) | null = null;
 export function setJoinSpawnCallback(cb: (() => void) | null): void {
@@ -409,6 +416,7 @@ export async function joinRoom(): Promise<void> {
   const payload = await res.json() as { snapshot?: unknown };
   if (payload.snapshot && isValidSnapshot(payload.snapshot)) {
     const me = payload.snapshot.players.find(p => p.playerId === playerId);
+    lastJoinMyPlayer = me ?? null;
     if (import.meta.env.DEV) console.log(`[joinRoom] myColor=${me?.color}, model=${!!localModel}, playerId=${playerId}`);
     if (me?.color) {
       localPlayerColor = me.color;
@@ -420,6 +428,7 @@ export async function joinRoom(): Promise<void> {
     applyRoomSnapshot(payload.snapshot);
   } else {
     lastJoinPeerXZ = [];
+    lastJoinMyPlayer = null;
   }
   joinSpawnCallback?.();
 }
@@ -704,6 +713,7 @@ export async function initMultiplayer(): Promise<void> {
  */
 export function cleanup(options?: { excludePreviousRoomFromAutoResolve?: boolean }): void {
   lastJoinPeerXZ = [];
+  lastJoinMyPlayer = null;
   multiplayerSessionActive = false;
   if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
   wsReconnectTimer = null;

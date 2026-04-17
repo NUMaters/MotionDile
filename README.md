@@ -76,7 +76,7 @@
 
 ## 技術スタック
 
-- **Three.js v0.175** — 3D レンダリング・アニメーション（WebGL）。エディタ用の型は **@types/three**（three 本体の npm パッケージに `.d.ts` が同梱されない構成向け）。**マルチで部屋に入室した直後**（REST 参加成功時）、`bootstrapGame.ts` が地形読み込み後に `world.ts` の `pickRandomSpawnPosition` で**境界円内**かつ**足場レイ上**（`sampleFlatFloorY`）で、周囲 8 方向の `canMoveOnWorld` が通る XZ を乱択してローカルキャラを配置し、障害物の内側やプレイエリア外への固定スポーンを避ける。**散らばり**は `playerId` をハッシュした**方位ブロック**（プレイヤーごとに別方向を優先）と**半径の外側寄りサンプリング**、参加スナップショットに載る**他プレイ座標からの最小距離**で近寄りすぎを抑える
+- **Three.js v0.175** — 3D レンダリング・アニメーション（WebGL）。エディタ用の型は **@types/three**（three 本体の npm パッケージに `.d.ts` が同梱されない構成向け）。**入室時の初期位置**は **Go `room_usecase.Join`** が `WANIAR_MAP_RADIUS`（`MapRadius`）を円半径として **XZ をサーバ側で乱択**し、既存プレイヤーとの距離・`playerId` 由来の方位スロットで密集を避ける（`internal/usecase/initial_spawn.go`）。REST スナップショットが全員に共有されるため**リモート表示も同じ座標から開始**する。フロントは `getLastJoinMyPlayer()` の XZ・向きをローカルワニに適用し、**Y は地形にスナップ**（`alignModelToFlatWorld`）。サーバ情報が無い場合のみ `world.ts` の `pickRandomSpawnPosition` でクライアント乱択（障害物・境界は `isValidStandingSpawnXZ` 等）
 - **@mediapipe/tasks-vision** — MediaPipe Hand Landmarker（ブラウザカメラ＋手認識で口開閉・首の向きを制御）
 - **@gltf-transform/core v4.3** — glTF/GLB ファイルのプログラム的な加工・生成
 - **glTF 2.0 (GLB)** — 3D モデルフォーマット（スキンメッシュ + ボーンアニメーション）

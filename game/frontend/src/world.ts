@@ -439,10 +439,29 @@ function hashStringTo01(s: string): number {
   return (h >>> 0) / 4294967296;
 }
 
+/** 近い座標は1点にまとめ、除外ゾーンの重複を減らす */
+function dedupeAvoidPeers(pts: Array<{ x: number; z: number }>): Array<{ x: number; z: number }> {
+  const out: Array<{ x: number; z: number }> = [];
+  const eps = 0.07;
+  for (const p of pts) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) continue;
+    if (out.some(q => Math.hypot(q.x - p.x, q.z - p.z) < eps)) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+/** 円周を何分割するか（playerId ハッシュで帯を割り当て、互いに離れた方位へ） */
+const SPAWN_ANGLE_SLOTS = 16;
+/** 中心付近へのスポーン集中を避ける内側半径 = maxR × この値 */
+const SPAWN_INNER_RADIUS_FRACTION = 0.2;
+/** 他プレイヤー足元との最低XZ距離（既定。狭いマップでは候補失敗が増えるので `opts` で下げ可能） */
+const SPAWN_AVOID_PEER_DEFAULT = 0.5;
+
 export type SpawnScatterOptions = {
   /** 他プレイヤー足元に近づけないときの XZ 参照点（スナップショット由来） */
   avoidNear?: Array<{ x: number; z: number }>;
-  /** `avoidNear` との最小距離（既定は約 0.34） */
+  /** `avoidNear` との最小距離（既定は約 0.5） */
   avoidMinDist?: number;
   /**
    * この文字列から基準方位を決め、プレイヤー同士が同じ方向に固まりにくくする（例: `playerId`）。
@@ -467,12 +486,17 @@ export function pickRandomSpawnPosition(
     return isValidStandingSpawnXZ(0, 0, footOffset) ? { x: 0, z: 0 } : null;
   }
   const maxR = Math.max(0.06, br - margin);
-  const avoid = (opts?.avoidNear ?? []).filter(
+  const avoid = dedupeAvoidPeers((opts?.avoidNear ?? []).filter(
     p => Number.isFinite(p.x) && Number.isFinite(p.z),
-  );
-  const avoidD = Math.max(0.2, opts?.avoidMinDist ?? 0.34);
+  ));
+  const avoidD = Math.max(0.24, opts?.avoidMinDist ?? SPAWN_AVOID_PEER_DEFAULT);
   const seed = opts?.scatterSeed?.trim() ?? '';
-  const wedgeCenter = seed ? hashStringTo01(seed) * Math.PI * 2 : null;
+  /** 各プレイヤーに専用の方位スロット（隣スロットと 22.5° ずつずれる） */
+  const angleSlot = seed
+    ? Math.floor(hashStringTo01(seed) * SPAWN_ANGLE_SLOTS) % SPAWN_ANGLE_SLOTS
+    : -1;
+  const slotSpan = (Math.PI * 2) / SPAWN_ANGLE_SLOTS;
+  const rInner = Math.min(maxR * SPAWN_INNER_RADIUS_FRACTION, maxR * 0.48);
 
   const farFromPeers = (x: number, z: number): boolean => {
     for (const p of avoid) {
@@ -486,30 +510,39 @@ export function pickRandomSpawnPosition(
     return isValidStandingSpawnXZ(x, z, footOffset) ? { x, z } : null;
   };
 
-  for (let attempt = 0; attempt < 88; attempt++) {
+  /** リング状領域（内半径 rInner〜maxR）を面積一様に乱択 */
+  const sampleAnnulus = (): { x: number; z: number } => {
+    const u = Math.random();
+    const r = Math.sqrt(rInner * rInner + u * (maxR * maxR - rInner * rInner));
     let theta: number;
-    let r: number;
-    if (wedgeCenter != null && attempt < 72) {
-      /** シード方向を中心に ±1.2rad 程度でばらつき、半径は外側寄り（指数 < 1）でマップを使い切る */
-      theta = wedgeCenter + (Math.random() + Math.random() - 1) * 1.2;
-      r = maxR * Math.pow(Math.random(), 0.42);
+    if (angleSlot >= 0) {
+      theta = (angleSlot + Math.random()) * slotSpan;
     } else {
-      const u = Math.random();
-      const v = Math.random();
-      r = Math.sqrt(u) * maxR;
-      theta = v * Math.PI * 2;
+      theta = Math.random() * Math.PI * 2;
     }
-    const x = Math.cos(theta) * r;
-    const z = Math.sin(theta) * r;
+    return { x: Math.cos(theta) * r, z: Math.sin(theta) * r };
+  };
+
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const { x, z } = sampleAnnulus();
     const ok = tryCandidate(x, z);
     if (ok) return ok;
+    /** スロット内で詰まったとき隣帯も試す */
+    if (angleSlot >= 0 && attempt % 7 === 6) {
+      const bump = (attempt / 7 | 0) % SPAWN_ANGLE_SLOTS;
+      const theta = ((angleSlot + bump) % SPAWN_ANGLE_SLOTS + Math.random()) * slotSpan;
+      const u = Math.random();
+      const r = Math.sqrt(rInner * rInner + u * (maxR * maxR - rInner * rInner));
+      const ok2 = tryCandidate(Math.cos(theta) * r, Math.sin(theta) * r);
+      if (ok2) return ok2;
+    }
   }
 
   const golden = Math.PI * (3 - Math.sqrt(5));
-  const phase0 = wedgeCenter ?? 0;
-  for (let i = 0; i < 56; i++) {
-    const t = (i + 0.5) / 56;
-    const r = Math.sqrt(t) * maxR;
+  const phase0 = angleSlot >= 0 ? angleSlot * slotSpan : 0;
+  for (let i = 0; i < 72; i++) {
+    const t = (i + 0.5) / 72;
+    const r = Math.sqrt(rInner * rInner + t * (maxR * maxR - rInner * rInner));
     const ang = i * golden + phase0;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;

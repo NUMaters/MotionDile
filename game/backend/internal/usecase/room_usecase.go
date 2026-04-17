@@ -101,14 +101,24 @@ func (u *RoomUsecase) Join(ctx context.Context, in JoinInput) (entity.RoomSnapsh
 	initial := entity.PlayerState{
 		PlayerID:    in.PlayerID,
 		DisplayName: name,
-		X:           0,
 		Y:           0,
-		Z:           0,
-		RotationY:   0,
 		NeckYaw:     0,
 		NeckPitch:   0,
 		Animation:   "Idle",
 		UpdatedAt:   time.Now().UnixMilli(),
+	}
+	if isReturning {
+		for _, p := range existingSnap.Players {
+			if p.PlayerID == in.PlayerID {
+				initial.X, initial.Y, initial.Z = p.X, p.Y, p.Z
+				initial.RotationY = p.RotationY
+				break
+			}
+		}
+	} else {
+		x, y, z, ry := InitialSpawnPosition(existingSnap.Players, in.PlayerID, u.rules.MapRadius)
+		initial.X, initial.Y, initial.Z = x, y, z
+		initial.RotationY = ry
 	}
 	return u.repo.Join(ctx, in.RoomID, initial)
 }

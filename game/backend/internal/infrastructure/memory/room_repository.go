@@ -45,6 +45,10 @@ func (r *RoomRepository) Join(_ context.Context, roomID string, initial entity.P
 		if strings.TrimSpace(initial.DisplayName) == "" {
 			initial.DisplayName = existing.DisplayName
 		}
+		initial.X, initial.Y, initial.Z = existing.X, existing.Y, existing.Z
+		initial.RotationY = existing.RotationY
+		initial.NeckYaw = existing.NeckYaw
+		initial.NeckPitch = existing.NeckPitch
 	} else {
 		initial.Color = pickUnusedColor(room)
 		if strings.TrimSpace(initial.DisplayName) == "" {

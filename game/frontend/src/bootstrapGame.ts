@@ -42,7 +42,7 @@ import {
   setLocalModel, setRemoteModelTemplate, localPlayerColor,
   setOnGameEnd, clearRemotePlayers,
   setJoinSpawnCallback, isMultiplayerSessionActive,
-  getLastJoinPeerXZ, getPlayerId,
+  getLastJoinPeerXZ, getLastJoinMyPlayer, getPlayerId,
 } from './network';
 import {
   showScreen, initTutorial, updateMatchmaking, initMatchmakingPip, getCurrentScreen,
@@ -460,19 +460,29 @@ function trySpawnLocalPlayerAfterJoin(): void {
       if (frames < 480) requestAnimationFrame(step);
       return;
     }
-    const pos = pickRandomSpawnPosition(playerFootOffset, {
-      scatterSeed: getPlayerId(),
-      avoidNear: getLastJoinPeerXZ(),
-    });
-    if (!model) return;
-    if (pos) {
-      model.position.x = pos.x;
-      model.position.z = pos.z;
+    const netMe = getLastJoinMyPlayer();
+    if (netMe && Number.isFinite(netMe.x) && Number.isFinite(netMe.z)) {
+      model.position.x = netMe.x;
+      model.position.z = netMe.z;
+      if (typeof netMe.rotationY === 'number' && Number.isFinite(netMe.rotationY)) {
+        model.rotation.y = netMe.rotationY;
+      } else {
+        model.rotation.y = Math.random() * Math.PI * 2;
+      }
     } else {
-      model.position.x = 0;
-      model.position.z = 0;
+      const pos = pickRandomSpawnPosition(playerFootOffset, {
+        scatterSeed: getPlayerId(),
+        avoidNear: getLastJoinPeerXZ(),
+      });
+      if (pos) {
+        model.position.x = pos.x;
+        model.position.z = pos.z;
+      } else {
+        model.position.x = 0;
+        model.position.z = 0;
+      }
+      model.rotation.y = Math.random() * Math.PI * 2;
     }
-    model.rotation.y = Math.random() * Math.PI * 2;
     normalizeCharacterRoot(model);
     box.setFromObject(model);
     playerFootOffset = Math.max(0.03, model.position.y - box.min.y);
