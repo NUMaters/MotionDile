@@ -6,7 +6,10 @@ import { applyServerGameRules, getGameRules, type GameRulesState } from './game-
 import { smoothToward } from './utils';
 import { scene } from './scene';
 import { composeNeckDeltaQuaternion } from './neck-sync';
-import { tintModel, setLocomotionWeights } from './character';
+import {
+  tintModel, setLocomotionWeights,
+  restoreBaseMaterialsForTintReset,
+} from './character';
 import { setMultiplayerStatus } from './hud';
 import {
   showScreen, getCurrentScreen,
@@ -71,10 +74,16 @@ const playerId = (() => {
 
 export function getPlayerId(): string { return playerId; }
 
-/** モデルと色が揃ったときに呼ぶ。色が変わった場合のみ `tintModel` する */
+/** モデルと色が揃ったときに呼ぶ。色が変わった場合のみティント。空のときはスナップショットへ復元 */
 export function applyLocalPlayerColorTint(): void {
-  if (!localModel || !localPlayerColor) return;
+  if (!localModel) return;
+  if (!localPlayerColor) {
+    restoreBaseMaterialsForTintReset(localModel);
+    lastAppliedLocalTintHex = '';
+    return;
+  }
   if (lastAppliedLocalTintHex === localPlayerColor) return;
+  restoreBaseMaterialsForTintReset(localModel);
   tintModel(localModel, localPlayerColor);
   lastAppliedLocalTintHex = localPlayerColor;
 }
@@ -373,6 +382,23 @@ async function resolveLobbyIfNeeded(): Promise<void> {
   }
 }
 
+/** 直近の REST 参加スナップショットから、他プレイヤーの XZ（重なり回避スポーン用） */
+let lastJoinPeerXZ: Array<{ x: number; z: number }> = [];
+
+export function getLastJoinPeerXZ(): Array<{ x: number; z: number }> {
+  return lastJoinPeerXZ;
+}
+
+/** `bootstrapGame` が登録。入室直後にランダムスポーン等（ワールド未準備時は側でリトライ） */
+let joinSpawnCallback: (() => void) | null = null;
+export function setJoinSpawnCallback(cb: (() => void) | null): void {
+  joinSpawnCallback = cb;
+}
+
+export function isMultiplayerSessionActive(): boolean {
+  return multiplayerSessionActive;
+}
+
 export async function joinRoom(): Promise<void> {
   const res = await fetch(`${GAME_API_BASE}/rooms/${encodeURIComponent(activeRoomId)}/players`, {
     method: 'POST',
@@ -388,8 +414,14 @@ export async function joinRoom(): Promise<void> {
       localPlayerColor = me.color;
       applyLocalPlayerColorTint();
     }
+    lastJoinPeerXZ = payload.snapshot.players
+      .filter(p => p.playerId !== playerId)
+      .map(p => ({ x: p.x, z: p.z }));
     applyRoomSnapshot(payload.snapshot);
+  } else {
+    lastJoinPeerXZ = [];
   }
+  joinSpawnCallback?.();
 }
 
 export async function leaveRoom(): Promise<void> {
@@ -498,9 +530,15 @@ function sendVoteExtend(): void {
 
 let currentRole = 'citizen';
 
+/** 空文字は falsy の `|| 'waiting'` にすると誤って待機扱いになるため、非空文字列のみ phase とする */
+function phaseFromPayload(raw: unknown): string {
+  if (typeof raw === 'string' && raw.length > 0) return raw;
+  return 'waiting';
+}
+
 function handleGameState(payload: Record<string, unknown>): void {
   applyServerGameRules(payload.rules as Partial<GameRulesState> | undefined);
-  const phase = payload.phase as string || 'waiting';
+  const phase = phaseFromPayload(payload.phase);
   const playerCount = (payload.playerCount as number) || 0;
   const countdownEnd = (payload.countdownEnd as number) || 0;
   const players = (payload.players as { displayName: string; color: string }[]) || [];
@@ -532,7 +570,8 @@ function handleGameState(payload: Record<string, unknown>): void {
       updateMatchmaking(playerCount, countdownEnd || null);
       if (players.length) updateMatchmakingPlayers(players);
     }
-    if (phase === 'waiting' && (screen === 'results' || screen === 'voting' || screen === 'game-hud')) {
+    // 対戦 HUD からの待機復帰のみホームへ（`voting` を含めると、投票終了直後の game_state が vote_result より先に届き結果画面を潰す）
+    if (phase === 'waiting' && screen === 'game-hud') {
       showScreen('home');
     }
   }
@@ -600,8 +639,11 @@ function handleVoteResult(payload: Record<string, unknown>): void {
     allyTheme,
     enemyTheme,
   );
-  cleanup();
-  if (onGameEndCallback) onGameEndCallback();
+  // DOM を描いてから切断・セッション解除（同一ターン内の後続 game_state との競合を避ける）
+  queueMicrotask(() => {
+    cleanup();
+    if (onGameEndCallback) onGameEndCallback();
+  });
 }
 
 let onGameEndCallback: (() => void) | null = null;
@@ -655,7 +697,13 @@ export async function initMultiplayer(): Promise<void> {
   }
 }
 
-export function cleanup(): void {
+/**
+ * @param options.excludePreviousRoomFromAutoResolve
+ *   true（既定）: 次に部屋 ID 未指定で参加するとき、直前の部屋を自動検索から除外（**試合終了直後に別プールへ**する用途）。
+ *   false: 除外しない（**ホームに戻って再参加**するとき、まだ待機中なら同じロビーへ入れる）。
+ */
+export function cleanup(options?: { excludePreviousRoomFromAutoResolve?: boolean }): void {
+  lastJoinPeerXZ = [];
   multiplayerSessionActive = false;
   if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
   wsReconnectTimer = null;
@@ -664,10 +712,11 @@ export function cleanup(): void {
   gameSocket = null;
   clearRemotePlayers();
   localPlayerColor = '';
-  lastAppliedLocalTintHex = '';
+  applyLocalPlayerColorTint();
   const roomJustLeft = activeRoomId;
   void leaveRoom();
-  if (roomJustLeft) excludeRoomAfterLeave = roomJustLeft;
+  const exclude = options?.excludePreviousRoomFromAutoResolve !== false;
+  if (roomJustLeft && exclude) excludeRoomAfterLeave = roomJustLeft;
   activeRoomId = '';
   stripRoomQueryFromUrl();
   setMultiplayerStatus('未参加（次回「ゲーム参加」で部屋を検索します）');

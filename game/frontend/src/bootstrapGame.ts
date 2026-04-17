@@ -30,19 +30,22 @@ import { updateDeviceLook, getDeviceLookYawPitch, recenterDeviceLook } from './d
 import {
   sampleTerrainHeight, sampleFlatFloorY, sampleMaterial002SinkOffset,
   canMoveOnWorld, loadWorldMap, getFlatWorldY, setFlatWorldY, hasWorldColliders,
-  clampToBoundary,
+  clampToBoundary, pickRandomSpawnPosition,
 } from './world';
 import {
   normalizeCharacterRoot, setupActions, setLocomotionWeights,
   loadBinaryWithXHR, gltfBasePath,
+  captureBaseMaterialsForTintReset,
 } from './character';
 import {
   initMultiplayer, sendLocalMove, updateRemotePlayers, cleanup as cleanupNetwork,
   setLocalModel, setRemoteModelTemplate, localPlayerColor,
   setOnGameEnd, clearRemotePlayers,
+  setJoinSpawnCallback, isMultiplayerSessionActive,
+  getLastJoinPeerXZ, getPlayerId,
 } from './network';
 import {
-  showScreen, initTutorial, updateMatchmaking, initMatchmakingPip,
+  showScreen, initTutorial, updateMatchmaking, initMatchmakingPip, getCurrentScreen,
 } from './screens';
 import { resetGameRulesFromConfig } from './game-rules';
 import { getStoredPlayerName, saveStoredPlayerName } from './player-names';
@@ -109,13 +112,17 @@ const compassNeedle = compassEl?.querySelector('.compass-needle') as SVGGElement
 
 function updateCompass(): void {
   if (!model || !compassEl) return;
-  const screen = (window as unknown as { __currentScreen?: string }).__currentScreen;
-  if (screen === 'game-hud') {
+  const screen = getCurrentScreen();
+  // 対戦中に加え、マッチメイキング待機中（ワールド操作可能）でも表示
+  const show = screen === 'game-hud' || screen === 'matchmaking';
+  if (show) {
     compassEl.classList.remove('hidden');
+    compassEl.setAttribute('aria-hidden', 'false');
     const deg = -(model.rotation.y * 180) / Math.PI;
     if (compassNeedle) compassNeedle.style.transform = `rotate(${deg}deg)`;
   } else {
     compassEl.classList.add('hidden');
+    compassEl.setAttribute('aria-hidden', 'true');
   }
 }
 lookResetBtn.addEventListener('pointerdown', (e) => {
@@ -423,6 +430,61 @@ function updateCamera() {
   sun.target.updateMatrixWorld();
 }
 
+/** 入室ランダムスポーン後・初回ロード時の三人称カメラ基準位置 */
+function syncInitialThirdPersonCamera(): void {
+  if (!model) return;
+  const initYaw = model.rotation.y;
+  const initFwdX = Math.sin(initYaw);
+  const initFwdZ = Math.cos(initYaw);
+  camera.position.set(
+    model.position.x - initFwdX * CAM_DISTANCE,
+    model.position.y + CAM_HEIGHT,
+    model.position.z - initFwdZ * CAM_DISTANCE,
+  );
+  camera.lookAt(
+    model.position.x + initFwdX * CAM_LOOK_AHEAD,
+    model.position.y + CAM_LOOK_HEIGHT,
+    model.position.z + initFwdZ * CAM_LOOK_AHEAD,
+  );
+}
+
+/**
+ * 部屋参加が完了したあと（REST 成功時）、地形メッシュとローカルモデルが揃うまで待ってランダム位置へ配置する。
+ */
+function trySpawnLocalPlayerAfterJoin(): void {
+  let frames = 0;
+  const step = (): void => {
+    if (!isMultiplayerSessionActive()) return;
+    frames++;
+    if (!model || !hasWorldColliders()) {
+      if (frames < 480) requestAnimationFrame(step);
+      return;
+    }
+    const pos = pickRandomSpawnPosition(playerFootOffset, {
+      scatterSeed: getPlayerId(),
+      avoidNear: getLastJoinPeerXZ(),
+    });
+    if (!model) return;
+    if (pos) {
+      model.position.x = pos.x;
+      model.position.z = pos.z;
+    } else {
+      model.position.x = 0;
+      model.position.z = 0;
+    }
+    model.rotation.y = Math.random() * Math.PI * 2;
+    normalizeCharacterRoot(model);
+    box.setFromObject(model);
+    playerFootOffset = Math.max(0.03, model.position.y - box.min.y);
+    alignModelToFlatWorld(true);
+    syncInitialThirdPersonCamera();
+    recenterDeviceLook();
+  };
+  requestAnimationFrame(step);
+}
+
+setJoinSpawnCallback(trySpawnLocalPlayerAfterJoin);
+
 // ─── Model loading ───
 let loadSettled = false;
 const loadSlowTimer = window.setTimeout(() => {
@@ -469,6 +531,8 @@ async function applyLoadedGltf(gltf: GLTF) {
   const template = cloneSkinned(model) as THREE.Group;
   setRemoteModelTemplate(template, gltf.animations);
 
+  captureBaseMaterialsForTintReset(model);
+
   console.log(`[applyLoadedGltf] localPlayerColor=${localPlayerColor}`);
   setLocalModel(model);
 
@@ -478,19 +542,7 @@ async function applyLoadedGltf(gltf: GLTF) {
   headBone = model.getObjectByName('head') ?? null;
   headBaseQuat = headBone ? headBone.quaternion.clone() : null;
 
-  const initYaw = model.rotation.y;
-  const initFwdX = Math.sin(initYaw);
-  const initFwdZ = Math.cos(initYaw);
-  camera.position.set(
-    model.position.x - initFwdX * CAM_DISTANCE,
-    model.position.y + CAM_HEIGHT,
-    model.position.z - initFwdZ * CAM_DISTANCE,
-  );
-  camera.lookAt(
-    model.position.x + initFwdX * CAM_LOOK_AHEAD,
-    model.position.y + CAM_LOOK_HEIGHT,
-    model.position.z + initFwdZ * CAM_LOOK_AHEAD,
-  );
+  syncInitialThirdPersonCamera();
 
   hideLoading();
 }
@@ -637,13 +689,13 @@ btnJoin.addEventListener('click', () => {
 setOnGameEnd(resetLocalPlayer);
 
 getEl<HTMLElement>('btn-back-home').addEventListener('click', () => {
-  void cleanupNetwork();
+  void cleanupNetwork({ excludePreviousRoomFromAutoResolve: false });
   resetLocalPlayer();
   showScreen('home');
 });
 
 getEl<HTMLElement>('btn-matchmaking-home').addEventListener('click', () => {
-  void cleanupNetwork();
+  void cleanupNetwork({ excludePreviousRoomFromAutoResolve: false });
   resetLocalPlayer();
   showScreen('home');
 });
@@ -652,7 +704,7 @@ void loadWorldMap(scene, ground, grid);
 void loadModel();
 
 window.addEventListener('beforeunload', () => {
-  cleanupNetwork();
+  cleanupNetwork({ excludePreviousRoomFromAutoResolve: false });
 });
 
 if (import.meta.hot) {

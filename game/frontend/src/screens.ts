@@ -5,6 +5,7 @@ import { getGameRules } from './game-rules';
 import { mountVotePreviews, disposeVotePreviews } from './vote-previews';
 import { resolveDisplayName } from './player-names';
 import { IC } from './icons';
+import { spawnResultConfetti, clearResultConfetti } from './result-confetti';
 
 export type ScreenName = 'home' | 'tutorial' | 'matchmaking' | 'game-hud' | 'voting' | 'results' | 'none';
 
@@ -21,6 +22,7 @@ let currentScreen: ScreenName = 'none';
 
 export function showScreen(name: ScreenName): void {
   if (name === 'home') disposeVotePreviews();
+  if (name !== 'results') clearResultConfetti();
   for (const [key, id] of Object.entries(screenIds)) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -535,7 +537,7 @@ export function applyVoteExtendServerPayload(
     btn.disabled = false;
     btn.textContent = '時間延長';
   }
-  statusEl.textContent = `延長の賛成 ${n}/${need}人（過半数で全員 +10秒・1回だけ）`;
+  statusEl.textContent = `+10秒延長 ${n}/${need}人`;
 }
 
 export function startVoting(
@@ -742,6 +744,7 @@ export function showResults(
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       resultsRoot?.classList.add('results-revealed');
+      spawnResultConfetti(youWin);
     });
   });
 }

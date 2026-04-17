@@ -4,6 +4,7 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import {
   GROUND_Y, TERRAIN_MIN_NORMAL_Y, MAX_STEP_UP,
   MATERIAL_002_SINK_OFFSET, PLAYER_COLLISION_RADIUS,
+  PLAYER_GROUND_CLEARANCE, PLAYER_HEIGHT_OFFSET,
   FLAT_WORLD_MODE,
   BOUNDARY_WALL_HEIGHT, BOUNDARY_WALL_SEGMENTS,
   BOUNDARY_MARGIN, BOUNDARY_PILLAR_COUNT, BOUNDARY_GROUND_RING_TUBE,
@@ -393,4 +394,128 @@ export async function loadWorldMap(
   } catch (e) {
     console.warn('World map load failed, fallback to default ground.', e);
   }
+}
+
+const spawnStandPos = new THREE.Vector3();
+
+/**
+ * 指定 XZ で足元が足場にあり、体の周囲が障害物にめり込まないか（移動判定と同系統）。
+ * `footOffset` はローカルキャラのバウンディングから求めた足元〜ルートのオフセット。
+ */
+export function isValidStandingSpawnXZ(x: number, z: number, footOffset: number): boolean {
+  if (!worldWalkables.length) return false;
+  const fwY = sampleFlatFloorY(x, z);
+  if (fwY == null) return false;
+  const { x: cx, z: cz } = clampToBoundary(x, z);
+  if ((cx - x) ** 2 + (cz - z) ** 2 > 1e-5) return false;
+  const br = getWorldBoundaryRadius();
+  if (Number.isFinite(br) && Math.hypot(cx, cz) > br + 1e-4) return false;
+  const sink = sampleMaterial002SinkOffset(cx, cz);
+  const modelY = fwY + footOffset + PLAYER_GROUND_CLEARANCE + PLAYER_HEIGHT_OFFSET - sink;
+  spawnStandPos.set(cx, modelY, cz);
+  const step = PLAYER_COLLISION_RADIUS * 1.2;
+  const dirs: [number, number][] = [
+    [step, 0],
+    [-step, 0],
+    [0, step],
+    [0, -step],
+    [step * 0.707, step * 0.707],
+    [step * 0.707, -step * 0.707],
+    [-step * 0.707, step * 0.707],
+    [-step * 0.707, -step * 0.707],
+  ];
+  for (const [dx, dz] of dirs) {
+    if (!canMoveOnWorld(spawnStandPos, cx + dx, cz + dz, footOffset)) return false;
+  }
+  return true;
+}
+
+/** `scatterSeed`（例: playerId）から [0,1) の決定的な値 */
+function hashStringTo01(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h) + s.charCodeAt(i);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+export type SpawnScatterOptions = {
+  /** 他プレイヤー足元に近づけないときの XZ 参照点（スナップショット由来） */
+  avoidNear?: Array<{ x: number; z: number }>;
+  /** `avoidNear` との最小距離（既定は約 0.34） */
+  avoidMinDist?: number;
+  /**
+   * この文字列から基準方位を決め、プレイヤー同士が同じ方向に固まりにくくする（例: `playerId`）。
+   * 未指定時は従来どおり円盤一様に近い乱択。
+   */
+  scatterSeed?: string;
+};
+
+/**
+ * 境界円内でランダムなスポーン XZ を選ぶ。地形・障害物・プレイエリア外を避ける。
+ * `scatterSeed` で方向を分散、`avoidNear` で他プレイと重なりにくくする。
+ * 失敗時は null（呼び出し側で原点フォールバック可）。
+ */
+export function pickRandomSpawnPosition(
+  footOffset: number,
+  opts?: SpawnScatterOptions,
+): { x: number; z: number } | null {
+  if (!worldWalkables.length) return null;
+  const br = getWorldBoundaryRadius();
+  const margin = PLAYER_COLLISION_RADIUS * 2.5 + BOUNDARY_MARGIN;
+  if (!Number.isFinite(br) || br <= margin + 0.05) {
+    return isValidStandingSpawnXZ(0, 0, footOffset) ? { x: 0, z: 0 } : null;
+  }
+  const maxR = Math.max(0.06, br - margin);
+  const avoid = (opts?.avoidNear ?? []).filter(
+    p => Number.isFinite(p.x) && Number.isFinite(p.z),
+  );
+  const avoidD = Math.max(0.2, opts?.avoidMinDist ?? 0.34);
+  const seed = opts?.scatterSeed?.trim() ?? '';
+  const wedgeCenter = seed ? hashStringTo01(seed) * Math.PI * 2 : null;
+
+  const farFromPeers = (x: number, z: number): boolean => {
+    for (const p of avoid) {
+      if (Math.hypot(x - p.x, z - p.z) < avoidD) return false;
+    }
+    return true;
+  };
+
+  const tryCandidate = (x: number, z: number): { x: number; z: number } | null => {
+    if (!farFromPeers(x, z)) return null;
+    return isValidStandingSpawnXZ(x, z, footOffset) ? { x, z } : null;
+  };
+
+  for (let attempt = 0; attempt < 88; attempt++) {
+    let theta: number;
+    let r: number;
+    if (wedgeCenter != null && attempt < 72) {
+      /** シード方向を中心に ±1.2rad 程度でばらつき、半径は外側寄り（指数 < 1）でマップを使い切る */
+      theta = wedgeCenter + (Math.random() + Math.random() - 1) * 1.2;
+      r = maxR * Math.pow(Math.random(), 0.42);
+    } else {
+      const u = Math.random();
+      const v = Math.random();
+      r = Math.sqrt(u) * maxR;
+      theta = v * Math.PI * 2;
+    }
+    const x = Math.cos(theta) * r;
+    const z = Math.sin(theta) * r;
+    const ok = tryCandidate(x, z);
+    if (ok) return ok;
+  }
+
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const phase0 = wedgeCenter ?? 0;
+  for (let i = 0; i < 56; i++) {
+    const t = (i + 0.5) / 56;
+    const r = Math.sqrt(t) * maxR;
+    const ang = i * golden + phase0;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    const ok = tryCandidate(x, z);
+    if (ok) return ok;
+  }
+  if (isValidStandingSpawnXZ(0, 0, footOffset) && farFromPeers(0, 0)) return { x: 0, z: 0 };
+  return null;
 }

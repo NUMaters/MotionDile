@@ -97,6 +97,7 @@
 
     <!-- Results Screen -->
     <div id="screen-results" class="screen-overlay screen-results-root hidden">
+      <div id="result-confetti-layer" class="result-confetti-layer" aria-hidden="true" />
       <div class="result-shell">
         <p class="result-kicker result-anim">試合結果</p>
         <div id="result-title" class="result-title result-anim" />
