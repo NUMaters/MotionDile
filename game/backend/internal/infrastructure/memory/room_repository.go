@@ -84,7 +84,10 @@ func (r *RoomRepository) RemovePlayer(_ context.Context, roomID, playerID string
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	room := r.ensureRoom(roomID)
+	room, ok := r.rooms[roomID]
+	if !ok {
+		return entity.RoomSnapshot{RoomID: roomID, Version: 0, Players: []entity.PlayerState{}}, nil
+	}
 	delete(room.players, playerID)
 	room.version++
 	return snapshotFromRoom(roomID, room), nil
@@ -186,6 +189,13 @@ func (r *RoomRepository) ListRoomIDs(_ context.Context) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func (r *RoomRepository) DeleteRoom(_ context.Context, roomID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.rooms, roomID)
+	return nil
 }
 
 func snapshotFromRoom(roomID string, room *roomState) entity.RoomSnapshot {

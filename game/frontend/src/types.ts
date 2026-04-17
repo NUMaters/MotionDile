@@ -2,22 +2,6 @@ import type * as THREE from 'three';
 
 export type HandLm = { x: number; y: number; z: number };
 
-export type HandControlModel = {
-  /**
-   * 1 = 従来（手首〜中指 MCP の傾き + 指カール）。2 = 掌の法線で首・指の開き比で口。
-   */
-  version: number;
-  mouth: { closedCurl: number; openCurl: number; openThreshold: number };
-  neck: {
-    neutralTilt: number;
-    yawGain: number;
-    maxYaw: number;
-    neutralPitchAngle: number;
-    pitchGain: number;
-    maxPitch: number;
-  };
-};
-
 export type HandLandmarkerVideoResult = {
   landmarks?: HandLm[][];
 };

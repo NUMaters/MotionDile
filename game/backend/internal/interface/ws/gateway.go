@@ -664,17 +664,40 @@ func (g *Gateway) finishVoting(roomID string) {
 
 	go func() {
 		time.Sleep(g.rules.ResultDuration)
-		g.resetGame(roomID)
+		g.dissolveRoomAfterGame(roomID)
 	}()
 }
 
-func (g *Gateway) resetGame(roomID string) {
-	gs := entity.GameState{
-		Phase:       entity.PhaseWaiting,
-		PlayerCount: g.roomClientCount(roomID),
+// dissolveRoomAfterGame は試合終了（結果表示時間経過後）に部屋を削除し、接続中のクライアントを切断する。
+func (g *Gateway) dissolveRoomAfterGame(roomID string) {
+	g.cancelGameTimer(roomID)
+
+	g.mu.RLock()
+	clients := g.rooms[roomID]
+	list := make([]*Client, 0, len(clients))
+	for c := range clients {
+		list = append(list, c)
 	}
-	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
-	g.broadcastGameState(roomID, gs)
+	g.mu.RUnlock()
+
+	if len(list) > 0 {
+		g.broadcastToRoom(roomID, genericEnvelope{
+			Type:    "room_closed",
+			Payload: map[string]string{"reason": "game_finished"},
+		})
+	}
+
+	if err := g.usecase.DeleteRoom(context.Background(), roomID); err != nil {
+		log.Printf("[ws] DeleteRoom %s: %v", roomID, err)
+	}
+
+	g.landmarksMu.Lock()
+	delete(g.landmarks, roomID)
+	g.landmarksMu.Unlock()
+
+	for _, c := range list {
+		_ = c.conn.Close()
+	}
 }
 
 func (g *Gateway) broadcastSnapshot(roomID string, snapshot entity.RoomSnapshot) {

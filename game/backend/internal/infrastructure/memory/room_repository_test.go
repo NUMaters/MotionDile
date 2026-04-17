@@ -158,6 +158,32 @@ func TestRoomRepository_RemovePlayer(t *testing.T) {
 	}
 }
 
+func TestRoomRepository_DeleteRoom(t *testing.T) {
+	ctx := context.Background()
+	r := NewRoomRepository()
+	const room = "r-del"
+	if _, err := r.Join(ctx, room, entity.PlayerState{PlayerID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteRoom(ctx, room); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := r.ListRoomIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected no rooms, got %#v", ids)
+	}
+	snap, err := r.RemovePlayer(ctx, room, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Players) != 0 {
+		t.Fatalf("removed player on deleted room must not recreate players, got %+v", snap)
+	}
+}
+
 func TestRoomRepository_GetGameState_PlayerCount(t *testing.T) {
 	ctx := context.Background()
 	r := NewRoomRepository()

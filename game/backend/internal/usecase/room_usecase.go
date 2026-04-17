@@ -218,6 +218,14 @@ func (u *RoomUsecase) Leave(ctx context.Context, roomID, playerID string) (entit
 	return u.repo.RemovePlayer(ctx, roomID, playerID)
 }
 
+// DeleteRoom は部屋と参加者・ゲーム状態をメモリから削除する（試合終了後の解体用）。
+func (u *RoomUsecase) DeleteRoom(ctx context.Context, roomID string) error {
+	if strings.TrimSpace(roomID) == "" {
+		return ErrInvalidInput
+	}
+	return u.repo.DeleteRoom(ctx, roomID)
+}
+
 func (u *RoomUsecase) Snapshot(ctx context.Context, roomID string) (entity.RoomSnapshot, error) {
 	if strings.TrimSpace(roomID) == "" {
 		return entity.RoomSnapshot{}, ErrInvalidInput

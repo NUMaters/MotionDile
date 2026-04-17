@@ -124,6 +124,15 @@
 
     <div id="cam-preview">
       <video id="cam-video" autoplay playsinline muted />
+      <img
+        id="cam-hand-guide"
+        src="/hand-guide.png"
+        width="320"
+        height="240"
+        alt=""
+        decoding="async"
+        hidden
+      />
       <canvas id="cam-overlay" />
     </div>
 

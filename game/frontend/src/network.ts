@@ -445,6 +445,9 @@ export function connectGameSocket(): void {
         case 'vote_result':
           handleVoteResult(envelope.payload as Record<string, unknown>);
           break;
+        case 'room_closed':
+          handleRoomClosed();
+          break;
       }
     } catch (err) {
       console.warn('WS parse error:', err);
@@ -526,6 +529,11 @@ function handleVoteStart(payload: Record<string, unknown>): void {
   }
   startVoting(voteEnd, players, playerId, getVotePreviewModel());
   setVoteCallback(sendVote);
+}
+
+function handleRoomClosed(): void {
+  if (!multiplayerSessionActive) return;
+  cleanup();
 }
 
 function handleVoteResult(payload: Record<string, unknown>): void {

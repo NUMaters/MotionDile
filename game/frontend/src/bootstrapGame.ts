@@ -24,7 +24,7 @@ import { initInput, getInputVector, joystick, keys, manualMouthOpen, consumeAtta
 import {
   handState, smoothNeckYaw, smoothNeckPitch,
   updateHandTracking, applyHeadTracking,
-  loadHandControlModel, activateSensorsFromUserGesture, registerSensorRetryOnWindowTap,
+  activateSensorsFromUserGesture, registerSensorRetryOnWindowTap,
 } from './hand-tracking';
 import { updateDeviceLook, getDeviceLookYawPitch, recenterDeviceLook } from './device-look';
 import {
@@ -649,7 +649,6 @@ getEl<HTMLElement>('btn-matchmaking-home').addEventListener('click', () => {
 });
 
 void loadWorldMap(scene, ground, grid);
-void loadHandControlModel();
 void loadModel();
 
 window.addEventListener('beforeunload', () => {

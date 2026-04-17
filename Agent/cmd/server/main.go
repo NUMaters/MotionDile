@@ -7,6 +7,7 @@ import (
 	"agent/internal/compose"
 	"agent/internal/config"
 	"agent/internal/infrastructure/openai"
+	"agent/internal/llm"
 	agenthttp "agent/internal/interface/http"
 	"agent/internal/ops"
 	"agent/internal/usecase"
@@ -14,11 +15,13 @@ import (
 
 func main() {
 	cfg := config.Load()
-	if cfg.OpenAIKey == "" {
-		log.Fatal("OPENAI_API_KEY is required")
+	var ai llm.Client
+	if cfg.OpenAIKey != "" {
+		ai = openai.NewClient(cfg.OpenAIKey)
+	} else {
+		log.Print("[agent] OPENAI_API_KEY 未設定: ヒントはテンプレート、テーマはローカル抽選のみ（本番利用時はキーを設定してください）")
+		ai = openai.Noop{}
 	}
-
-	ai := openai.NewClient(cfg.OpenAIKey)
 	llmComposer := compose.NewLLMComposer(ai)
 	templateComposer := compose.NewTemplateComposer()
 	historyStore := ops.NewMemoryHintHistoryStore()
