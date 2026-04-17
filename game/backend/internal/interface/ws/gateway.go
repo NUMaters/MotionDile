@@ -683,15 +683,24 @@ func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
 	for {
 		select {
 		case <-hintTicker.C:
+			// GenerateHint は Agent 呼び出しで数秒かかることがある。同期で待つと gameTimer と同時発火時に
+			// 対戦終了→投票開始（vote_start）が遅延するため、ヒントだけ別ゴルーチンへ逃がす。
 			hintNum++
-			log.Printf("[ws] generating hint #%d for room %s", hintNum, roomID)
-			hint, err := g.usecase.GenerateHint(context.Background(), roomID, hintNum, g.getRoomLandmarks(roomID))
-			if err != nil {
-				log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
-			} else {
-				log.Printf("[ws] broadcasting hint #%d to room %s (len=%d)", hintNum, roomID, len(hint.Text))
+			n := hintNum
+			go func() {
+				log.Printf("[ws] generating hint #%d for room %s", n, roomID)
+				hint, err := g.usecase.GenerateHint(context.Background(), roomID, n, g.getRoomLandmarks(roomID))
+				if err != nil {
+					log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
+					return
+				}
+				gs, err := g.usecase.GetGameState(context.Background(), roomID)
+				if err != nil || gs.Phase != entity.PhasePlaying {
+					return
+				}
+				log.Printf("[ws] broadcasting hint #%d to room %s (len=%d)", n, roomID, len(hint.Text))
 				g.broadcastToRoom(roomID, genericEnvelope{Type: "hint", Payload: hint})
-			}
+			}()
 		case <-gameTimer.C:
 			g.gameMu.Lock()
 			delete(g.gameCtxs, roomID)
