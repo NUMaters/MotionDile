@@ -123,8 +123,10 @@ func (u *RoomUsecase) Join(ctx context.Context, in JoinInput) (entity.RoomSnapsh
 	return u.repo.Join(ctx, in.RoomID, initial)
 }
 
-// ResolveLobbyRoom は preferred が待機・カウントダウン中ならそのまま、対戦中等なら別の待機可能な部屋 ID または新規 ID を返す。
+// ResolveLobbyRoom は部屋 ID の解決のみ行う。
 // preferred が空のときは、待機中の部屋をいずれか一つ選び（なければ新規作成）。既定 URL（クエリなし）からの参加用。
+// preferred が空でないときは常にその ID を返す（対戦・投票・結果中でも）。可否は Join が既存メンバーかどうかで判定する。
+// リロード後も同じ部屋を preferred に渡せるようにし、別ロビーへ誘導されないようにする。
 // excludeRoomID が空でないときは preferred が空の場合のみ、該当 ID の待機ルームはスキップする（ゲーム終了直後に別プールへ入るため）。
 func (u *RoomUsecase) ResolveLobbyRoom(ctx context.Context, preferredRoomID, excludeRoomID string) (roomID string, redirected bool, reason string, err error) {
 	preferredRoomID = strings.TrimSpace(preferredRoomID)
@@ -155,30 +157,10 @@ func (u *RoomUsecase) ResolveLobbyRoom(ctx context.Context, preferredRoomID, exc
 		return newID, true, "auto_create", nil
 	}
 
-	gs, err := u.repo.GetGameState(ctx, preferredRoomID)
-	if err != nil {
+	if _, err := u.repo.GetGameState(ctx, preferredRoomID); err != nil {
 		return "", false, "", err
 	}
-	if isLobbyPhase(gs.Phase) {
-		return preferredRoomID, false, "", nil
-	}
-	for _, id := range allIDs {
-		if id == preferredRoomID {
-			continue
-		}
-		g, e := u.repo.GetGameState(ctx, id)
-		if e != nil {
-			continue
-		}
-		if isLobbyPhase(g.Phase) {
-			return id, true, "game_in_progress", nil
-		}
-	}
-	newID, err := u.allocNewLobbyRoomID(allIDs)
-	if err != nil {
-		return "", false, "", err
-	}
-	return newID, true, "game_in_progress", nil
+	return preferredRoomID, false, "", nil
 }
 
 func (u *RoomUsecase) allocNewLobbyRoomID(existing []string) (string, error) {

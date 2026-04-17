@@ -43,6 +43,8 @@ import {
   setOnGameEnd, clearRemotePlayers,
   setJoinSpawnCallback, isMultiplayerSessionActive,
   getLastJoinPeerXZ, getLastJoinMyPlayer, getPlayerId,
+  shouldAutoRejoinMultiplayer, resumeMultiplayerSessionAfterReload,
+  persistLastMultiplayerSpawnFromClient, getClientSpawnFallbackForActiveRoom,
 } from './network';
 import {
   showScreen, initTutorial, updateMatchmaking, initMatchmakingPip, getCurrentScreen,
@@ -449,18 +451,42 @@ function syncInitialThirdPersonCamera(): void {
 }
 
 /**
- * 部屋参加が完了したあと（REST 成功時）、地形メッシュとローカルモデルが揃うまで待ってランダム位置へ配置する。
+ * 部屋参加が完了したあと（REST 成功時）、地形メッシュとローカルモデルが揃うまで待って配置する。
+ * サーバが保持している最終座標（再接続時）を優先し、無ければクライアント退避値、最後にランダム。
  */
 function trySpawnLocalPlayerAfterJoin(): void {
   let frames = 0;
   const step = (): void => {
-    if (!isMultiplayerSessionActive()) return;
     frames++;
+    if (!isMultiplayerSessionActive()) {
+      if (frames < 120) requestAnimationFrame(step);
+      return;
+    }
     if (!model || !hasWorldColliders()) {
       if (frames < 480) requestAnimationFrame(step);
       return;
     }
-    const netMe = getLastJoinMyPlayer();
+    let netMe = getLastJoinMyPlayer();
+    const hasXZ =
+      netMe && Number.isFinite(netMe.x) && Number.isFinite(netMe.z);
+    if (!hasXZ) {
+      const fb = getClientSpawnFallbackForActiveRoom();
+      if (fb) {
+        netMe = {
+          playerId: getPlayerId(),
+          x: fb.x,
+          y: netMe?.y ?? 0,
+          z: fb.z,
+          rotationY: fb.ry,
+          neckYaw: netMe?.neckYaw ?? 0,
+          neckPitch: netMe?.neckPitch ?? 0,
+          animation: netMe?.animation ?? 'Idle',
+          mouthOpenness: netMe?.mouthOpenness ?? 0,
+          color: netMe?.color ?? localPlayerColor,
+          updatedAt: netMe?.updatedAt ?? Date.now(),
+        };
+      }
+    }
     if (netMe && Number.isFinite(netMe.x) && Number.isFinite(netMe.z)) {
       model.position.x = netMe.x;
       model.position.z = netMe.z;
@@ -557,6 +583,18 @@ async function applyLoadedGltf(gltf: GLTF) {
   hideLoading();
 }
 
+/** 参加済みセッションからのリロード時、待機画面へ入ってそのままマルチ再接続 */
+async function maybeResumeMultiplayerAfterReload(): Promise<void> {
+  if (!shouldAutoRejoinMultiplayer()) return;
+  showScreen('matchmaking');
+  updateMatchmaking(1, null);
+  activateSensorsFromUserGesture({
+    onCameraFail: registerSensorRetryOnWindowTap,
+  });
+  const ok = await resumeMultiplayerSessionAfterReload();
+  if (!ok) showScreen('home');
+}
+
 async function loadModel() {
   const downloadTimeoutMs = 300000;
   const parseTimeoutMs = 120000;
@@ -643,6 +681,7 @@ async function loadModel() {
 
     try {
       await applyLoadedGltf(gltf);
+      await maybeResumeMultiplayerAfterReload();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       showLoadError(`初期化エラー: ${msg}`);
@@ -714,7 +753,14 @@ void loadWorldMap(scene, ground, grid);
 void loadModel();
 
 window.addEventListener('beforeunload', () => {
-  cleanupNetwork({ excludePreviousRoomFromAutoResolve: false });
+  if (model && isMultiplayerSessionActive()) {
+    persistLastMultiplayerSpawnFromClient({
+      x: model.position.x,
+      z: model.position.z,
+      ry: model.rotation.y,
+    });
+  }
+  cleanupNetwork({ excludePreviousRoomFromAutoResolve: false, notifyServerLeave: false });
 });
 
 if (import.meta.hot) {

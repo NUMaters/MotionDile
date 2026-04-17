@@ -187,10 +187,19 @@ func (g *Gateway) Handle(c *gin.Context) {
 	g.readPump(client)
 }
 
+// shouldRemovePlayerOnSocketClose は待機ロビーのみ true。対戦・カウントダウン・投票・結果中に
+// WebSocket が切れても REST の部屋メンバーは残し、同じ playerId で再参加できるようにする。
+func shouldRemovePlayerOnSocketClose(phase entity.GamePhase) bool {
+	return phase == entity.PhaseWaiting || phase == ""
+}
+
 func (g *Gateway) readPump(client *Client) {
 	defer func() {
 		g.unregister(client)
-		_, _ = g.usecase.Leave(context.Background(), client.roomID, client.playerID)
+		gs, err := g.usecase.GetGameState(context.Background(), client.roomID)
+		if err == nil && shouldRemovePlayerOnSocketClose(gs.Phase) {
+			_, _ = g.usecase.Leave(context.Background(), client.roomID, client.playerID)
+		}
 		_ = client.conn.Close()
 		go g.checkGameTransition(client.roomID)
 	}()
@@ -471,6 +480,7 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 			dn = "プレイヤー"
 		}
 		playerList = append(playerList, map[string]string{
+			"playerId":    p.PlayerID,
 			"displayName": dn,
 			"color":       p.Color,
 		})
@@ -493,6 +503,16 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 			"hintIntervalSec":   int(r.HintInterval / time.Second),
 			"resultDurationSec": int(r.ResultDuration / time.Second),
 		},
+	}
+	// 再接続クライアントが game_start を受け取れなくても UI を復元できるよう付与
+	if gs.EnemyPlayerID != "" {
+		payload["enemyPlayerId"] = gs.EnemyPlayerID
+	}
+	if gs.AllyTheme != "" {
+		payload["allyTheme"] = gs.AllyTheme
+	}
+	if gs.EnemyTheme != "" {
+		payload["enemyTheme"] = gs.EnemyTheme
 	}
 	if gs.Phase == entity.PhaseVoting {
 		n := len(gs.RoundPlayerIDs)
