@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"agent/internal/llm"
 )
 
 const apiURL = "https://api.openai.com/v1/chat/completions"
@@ -52,12 +54,12 @@ type chatResponse struct {
 }
 
 // ChatCompletion は system + user メッセージを送り、アシスタントの返答を返す。
-func (c *Client) ChatCompletion(ctx context.Context, system, user string) (string, error) {
+func (c *Client) Generate(ctx context.Context, input llm.PromptInput) (string, error) {
 	body := chatRequest{
 		Model: c.model,
 		Messages: []chatMessage{
-			{Role: "system", Content: system},
-			{Role: "user", Content: user},
+			{Role: "system", Content: input.System},
+			{Role: "user", Content: input.User},
 		},
 		MaxTokens:   120,
 		Temperature: 0.8,
@@ -100,4 +102,9 @@ func (c *Client) ChatCompletion(ctx context.Context, system, user string) (strin
 	}
 
 	return result.Choices[0].Message.Content, nil
+}
+
+// ChatCompletion は旧呼び出し経路との互換用。
+func (c *Client) ChatCompletion(ctx context.Context, system, user string) (string, error) {
+	return c.Generate(ctx, llm.PromptInput{System: system, User: user})
 }

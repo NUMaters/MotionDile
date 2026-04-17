@@ -84,6 +84,7 @@ type LandmarkEvidence struct {
 type EnvironmentEvidence struct {
 	DistanceFromCenter float64
 	NearWall           bool
+	NearShore          bool
 	NearCenter         bool
 	NearbyLandmark     LandmarkEvidence
 }
@@ -246,9 +247,17 @@ func deriveFacing(rotationY float64) FacingDirection {
 
 func deriveEnvironment(x, z, mapRadius float64, landmarks []domain.LandmarkInfo) EnvironmentEvidence {
 	distFromCenter := math.Sqrt(x*x + z*z)
+	nearShore := false
+	nearWall := false
+	if mapRadius > 0 {
+		ratio := distFromCenter / mapRadius
+		nearShore = ratio >= 0.68
+		nearWall = ratio >= 0.8
+	}
 	return EnvironmentEvidence{
 		DistanceFromCenter: distFromCenter,
-		NearWall:           mapRadius > 0 && distFromCenter > mapRadius*0.8,
+		NearWall:           nearWall,
+		NearShore:          nearShore,
 		NearCenter:         distFromCenter < 0.3,
 		NearbyLandmark:     findNearbyLandmark(x, z, landmarks, 0.35),
 	}
