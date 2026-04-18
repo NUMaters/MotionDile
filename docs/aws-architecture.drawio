@@ -1,0 +1,216 @@
+<mxfile host="app.diagrams.net" modified="2026-04-18T00:00:00.000Z" agent="Cursor" version="24.0.0" type="device">
+  <diagram id="aws-arch" name="AWS Architecture">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- User -->
+        <mxCell id="user" value="User (Browser)" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.users;labelBackgroundColor=none;sketch=0;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="700" y="10" width="60" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- CloudFront -->
+        <mxCell id="cf_group" value="Amazon CloudFront" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=1;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_cloudfront;strokeColor=#7B61FF;fillColor=none;verticalAlign=top;align=center;spacingTop=7;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="530" y="100" width="400" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="cf_dist" value="CloudFront&#xa;Distribution&#xa;(HTTPS)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudfront;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="130" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="cf_func" value="CF Function&#xa;(SPA Rewrite)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="810" y="135" width="40" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: User -> CloudFront -->
+        <mxCell id="e_user_cf" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#232F3E;strokeWidth=2;fontSize=10;" edge="1" source="user" target="cf_dist" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_user_cf_label" value="HTTPS" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;fontStyle=1;" connectable="0" vertex="1" parent="e_user_cf">
+          <mxGeometry x="-0.2" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- AWS Cloud -->
+        <mxCell id="aws_cloud" value="AWS Cloud (ap-northeast-1)" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=14;fontStyle=1;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud_alt;strokeColor=#AAB7B8;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;spacingTop=7;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="270" width="1520" height="880" as="geometry" />
+        </mxCell>
+
+        <!-- S3 Bucket -->
+        <mxCell id="s3_bucket" value="S3 Bucket&#xa;(Frontend Static)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#3F8624;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="180" y="310" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: CF -> S3 -->
+        <mxCell id="e_cf_s3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3F8624;strokeWidth=2;fontSize=10;" edge="1" source="cf_dist" target="s3_bucket" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cf_s3_label" value="Default (static)&#xa;OAC" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;" connectable="0" vertex="1" parent="e_cf_s3">
+          <mxGeometry x="0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- VPC -->
+        <mxCell id="vpc" value="VPC (10.0.0.0/16) - waniar-vpc" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=13;fontStyle=1;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc2;strokeColor=#8C4FFF;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;spacingTop=7;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="80" y="400" width="1440" height="720" as="geometry" />
+        </mxCell>
+
+        <!-- IGW -->
+        <mxCell id="igw" value="Internet&#xa;Gateway" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.internet_gateway;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="750" y="415" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Public Subnet 1 (AZ-a) -->
+        <mxCell id="subnet1" value="Public Subnet 1 (10.0.1.0/24) - AZ-a" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=11;fontStyle=1;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_subnet;strokeColor=#248814;fillColor=#E9F3E6;verticalAlign=top;align=left;spacingLeft=30;spacingTop=7;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="120" y="500" width="660" height="580" as="geometry" />
+        </mxCell>
+
+        <!-- Public Subnet 2 (AZ-c) -->
+        <mxCell id="subnet2" value="Public Subnet 2 (10.0.2.0/24) - AZ-c" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=11;fontStyle=1;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_subnet;strokeColor=#248814;fillColor=#E9F3E6;verticalAlign=top;align=left;spacingLeft=30;spacingTop=7;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="820" y="500" width="660" height="580" as="geometry" />
+        </mxCell>
+
+        <!-- ALB Game Backend -->
+        <mxCell id="alb_game" value="ALB&#xa;(Game Backend)&#xa;HTTP:80" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.application_load_balancer;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="540" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- ALB Agent -->
+        <mxCell id="alb_agent" value="ALB&#xa;(Agent)&#xa;HTTP:80" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#8C4FFF;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.application_load_balancer;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="790" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: CF -> ALB Game -->
+        <mxCell id="e_cf_alb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#8C4FFF;strokeWidth=2;fontSize=10;" edge="1" source="cf_dist" target="alb_game" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cf_alb_label" value="/api/* /ws* /healthz" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;fontStyle=1;" connectable="0" vertex="1" parent="e_cf_alb">
+          <mxGeometry x="0.2" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- ECS Cluster Group -->
+        <mxCell id="ecs_cluster" value="ECS Cluster (waniar-cluster)" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=11;fontStyle=1;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_ecs_cluster;strokeColor=#D86613;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;spacingTop=7;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="650" width="560" height="400" as="geometry" />
+        </mxCell>
+
+        <!-- Fargate: Game Backend -->
+        <mxCell id="fargate_game" value="Fargate Service&#xa;Game Backend&#xa;Port 8090&#xa;CPU:512 / Mem:1024MB" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#D86613;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ecs_service;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="330" y="685" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- SG Game Task -->
+        <mxCell id="sg_game_task" value="SG: waniar-game-task-sg&#xa;IN: ALB SG:8090" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=9;fontStyle=0;verticalAlign=middle;align=center;" vertex="1" parent="1">
+          <mxGeometry x="180" y="695" width="140" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Fargate: Agent -->
+        <mxCell id="fargate_agent" value="Fargate Service&#xa;Agent&#xa;Port 8091&#xa;CPU:256 / Mem:512MB" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#D86613;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ecs_service;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="330" y="900" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- SG Agent Task -->
+        <mxCell id="sg_agent_task" value="SG: waniar-agent-task-sg&#xa;IN: ALB SG:8091" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=9;fontStyle=0;verticalAlign=middle;align=center;" vertex="1" parent="1">
+          <mxGeometry x="180" y="910" width="140" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: ALB Game -> Fargate Game -->
+        <mxCell id="e_alb_game" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#D86613;strokeWidth=2;" edge="1" source="alb_game" target="fargate_game" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_alb_game_label" value=":8090" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;fontStyle=1;" connectable="0" vertex="1" parent="e_alb_game">
+          <mxGeometry relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- Arrow: ALB Agent -> Fargate Agent -->
+        <mxCell id="e_alb_agent" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#D86613;strokeWidth=2;" edge="1" source="alb_agent" target="fargate_agent" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_alb_agent_label" value=":8091" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;fontStyle=1;" connectable="0" vertex="1" parent="e_alb_agent">
+          <mxGeometry relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- Arrow: Game Backend -> ALB Agent (internal HTTP) -->
+        <mxCell id="e_game_agent" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#FF6600;strokeWidth=2;dashed=1;" edge="1" source="fargate_game" target="alb_agent" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_game_agent_label" value="AGENT_URL&#xa;(HTTP)" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;fontStyle=1;fontColor=#FF6600;" connectable="0" vertex="1" parent="e_game_agent">
+          <mxGeometry relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- ECR Repos -->
+        <mxCell id="ecr_group" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#D86613;dashed=1;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="880" y="660" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="ecr_game" value="ECR&#xa;waniar-game-backend" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#D86613;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ecr;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="910" y="685" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="ecr_agent" value="ECR&#xa;waniar-agent" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#D86613;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ecr;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="685" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="ecr_label" value="ECR Repositories" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=11;fontStyle=1;fontColor=#D86613;" vertex="1" parent="1">
+          <mxGeometry x="935" y="665" width="130" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Bedrock -->
+        <mxCell id="bedrock" value="Amazon Bedrock&#xa;Claude 3 Haiku" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#01A88D;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="880" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Agent -> Bedrock -->
+        <mxCell id="e_agent_bedrock" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#01A88D;strokeWidth=2;" edge="1" source="fargate_agent" target="bedrock" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_agent_bedrock_label" value="bedrock:InvokeModel" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;fontStyle=1;fontColor=#01A88D;" connectable="0" vertex="1" parent="e_agent_bedrock">
+          <mxGeometry relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- Secrets Manager -->
+        <mxCell id="secrets" value="Secrets Manager&#xa;OpenAI API Key" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#DD344C;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.secrets_manager;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="900" y="1000" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Agent -> Secrets -->
+        <mxCell id="e_agent_secrets" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#DD344C;strokeWidth=1;dashed=1;" edge="1" source="fargate_agent" target="secrets" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_agent_secrets_label" value="(optional)&#xa;GetSecretValue" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=8;fontColor=#DD344C;" connectable="0" vertex="1" parent="e_agent_secrets">
+          <mxGeometry relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- CloudWatch Logs -->
+        <mxCell id="cwlogs" value="CloudWatch Logs&#xa;/ecs/waniar-game&#xa;/ecs/waniar-agent" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;align=center;strokeWidth=2;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch_2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="880" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Game -> CW -->
+        <mxCell id="e_game_cw" style="rounded=1;strokeColor=#E7157B;strokeWidth=1;dashed=1;" edge="1" source="fargate_game" target="cwlogs" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Agent -> CW -->
+        <mxCell id="e_agent_cw" style="rounded=1;strokeColor=#E7157B;strokeWidth=1;dashed=1;" edge="1" source="fargate_agent" target="cwlogs" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cw_label" value="Logs" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;fontColor=#E7157B;" connectable="0" vertex="1" parent="e_agent_cw">
+          <mxGeometry relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- OpenAI (External) -->
+        <mxCell id="openai" value="OpenAI API&#xa;(External)" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.general_saml_token;labelBackgroundColor=none;sketch=0;fontStyle=1;fontSize=11;fillColor=#232F3E;strokeColor=none;fontColor=#232F3E;verticalLabelPosition=bottom;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="1000" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow: Agent -> OpenAI -->
+        <mxCell id="e_agent_openai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#232F3E;strokeWidth=1;dashed=1;" edge="1" source="fargate_agent" target="openai" parent="1">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="354" y="1024" /><mxPoint x="1374" y="1024" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_agent_openai_label" value="(optional) HTTPS" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;fontColor=#666666;" connectable="0" vertex="1" parent="e_agent_openai">
+          <mxGeometry relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- IAM Roles Note -->
+        <mxCell id="iam_note" value="IAM Roles:&#xa;- waniar-game-exec (ECR pull + Logs)&#xa;- waniar-game-task&#xa;- waniar-agent-exec (ECR pull + Logs + Secrets)&#xa;- waniar-agent-task (Bedrock InvokeModel)" style="shape=note;whiteSpace=wrap;html=1;size=14;verticalAlign=top;align=left;fillColor=#F5F5F5;strokeColor=#666666;fontColor=#333333;fontSize=9;spacingLeft=5;spacingRight=5;spacingTop=3;" vertex="1" parent="1">
+          <mxGeometry x="1200" y="540" width="260" height="100" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
