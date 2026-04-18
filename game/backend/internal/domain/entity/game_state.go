@@ -1,5 +1,10 @@
 package entity
 
+// IsLobbyPhase はマッチ待ち・カウントダウンをまとめたロビー相当フェーズかどうか。
+func IsLobbyPhase(ph GamePhase) bool {
+	return ph == "" || ph == PhaseWaiting || ph == PhaseCountdown
+}
+
 type GamePhase string
 
 const (
@@ -25,6 +30,8 @@ type GameState struct {
 	CountdownEnd  int64             `json:"countdownEnd,omitempty"`
 	GameEnd       int64             `json:"gameEnd,omitempty"`
 	VoteEnd       int64             `json:"voteEnd,omitempty"`
+	// ResultEnd は結果表示が終わる unix ms（分散スケジューラが部屋解体する締切）
+	ResultEnd int64 `json:"resultEnd,omitempty"`
 	HintCount     int               `json:"hintCount"`
 	PlayerCount   int               `json:"playerCount"`
 }

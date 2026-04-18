@@ -22,7 +22,7 @@ func NewLLMComposer(client llm.Client) *LLMComposer {
 func (c *LLMComposer) Compose(ctx context.Context, ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary) (string, error) {
 	selected := material.SelectMaterials(ev, hintPolicy)
 	directives := buildCandidateDirectives(selected, hintPolicy)
-	input := buildPromptInput(ev, hintPolicy, summary)
+	input := buildPromptInputWith(ev, hintPolicy, summary, selected, directives)
 
 	text, issues, err := c.composeBestCandidate(ctx, input, ev, hintPolicy, summary, selected, directives)
 	if err == nil {

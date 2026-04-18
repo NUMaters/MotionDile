@@ -20,6 +20,8 @@ import (
 
 	"waniar/game-backend/internal/config"
 	"waniar/game-backend/internal/domain/entity"
+	"waniar/game-backend/internal/domain/repository"
+	"waniar/game-backend/internal/scheduler"
 	"waniar/game-backend/internal/usecase"
 )
 
@@ -74,14 +76,20 @@ type genericEnvelope struct {
 }
 
 type Client struct {
-	conn     *websocket.Conn
-	send     chan []byte
-	roomID   string
-	playerID string
+	conn      *websocket.Conn
+	send      chan []byte
+	roomID    string
+	playerID  string
+	closeOnce sync.Once
 }
 
 type roomGameCtx struct {
 	cancel context.CancelFunc
+}
+
+// RoomPublisher は Redis Pub/Sub 等で他 backend インスタンスへ同じペイロードを届けるための抽象。
+type RoomPublisher interface {
+	Publish(ctx context.Context, roomID string, payload []byte) error
 }
 
 type Gateway struct {
@@ -95,8 +103,10 @@ type Gateway struct {
 	gameMu   sync.Mutex
 	gameCtxs map[string]*roomGameCtx
 
-	landmarksMu sync.RWMutex
-	landmarks   map[string][]usecase.LandmarkInfo
+	// 分散モード（Redis）。未設定時は従来どおりローカルタイマー + ローカル配信のみ。
+	bus      RoomPublisher
+	presence repository.RoomPresence
+	deadline *scheduler.DeadlineRunner
 }
 
 func NewGateway(uc *usecase.RoomUsecase, rules config.Rules) *Gateway {
@@ -106,12 +116,108 @@ func NewGateway(uc *usecase.RoomUsecase, rules config.Rules) *Gateway {
 			WriteBufferSize: 1024,
 			CheckOrigin:     buildCheckOrigin(),
 		},
-		usecase:   uc,
-		rules:     rules,
-		rooms:     make(map[string]map[*Client]struct{}),
-		gameCtxs:  make(map[string]*roomGameCtx),
-		landmarks: make(map[string][]usecase.LandmarkInfo),
+		usecase:  uc,
+		rules:    rules,
+		rooms:    make(map[string]map[*Client]struct{}),
+		gameCtxs: make(map[string]*roomGameCtx),
 	}
+}
+
+// SetDistributed は Redis バス・接続プレゼンス・期限ランナーを接続する（複数インスタンス運用時）。
+func (g *Gateway) SetDistributed(bus RoomPublisher, pres repository.RoomPresence, dl *scheduler.DeadlineRunner) {
+	g.bus = bus
+	g.presence = pres
+	g.deadline = dl
+}
+
+func (g *Gateway) useDistributed() bool {
+	return g.deadline != nil
+}
+
+func (g *Gateway) syncDeadlines(roomID string) {
+	if g.deadline == nil {
+		return
+	}
+	gs, err := g.usecase.GetGameState(context.Background(), roomID)
+	if err != nil {
+		return
+	}
+	_ = g.deadline.SyncRoom(context.Background(), roomID, gs, g.rules, time.Now())
+}
+
+func (g *Gateway) connectedCount(roomID string) int {
+	if g.presence != nil {
+		n, err := g.presence.Count(context.Background(), roomID)
+		if err == nil {
+			return n
+		}
+	}
+	return g.roomClientCount(roomID)
+}
+
+// DeliverFromBus は Redis 購読側からローカル WS へ同じ JSON を流す。
+func (g *Gateway) DeliverFromBus(roomID string, data []byte) {
+	var env gatewayMessage
+	if json.Unmarshal(data, &env) == nil && env.Type == "relay_game_start" {
+		g.sendGameStartToLocalClients(roomID)
+		return
+	}
+	g.deliverRawToRoom(roomID, data)
+}
+
+func (g *Gateway) deliverRawToRoom(roomID string, data []byte) {
+	g.mu.RLock()
+	roomClients := g.rooms[roomID]
+	g.mu.RUnlock()
+	for client := range roomClients {
+		select {
+		case client.send <- data:
+		default:
+			go g.unregister(client)
+		}
+	}
+}
+
+func (g *Gateway) maybePublishRelayGameStart(roomID string) {
+	if g.bus == nil {
+		return
+	}
+	data, err := json.Marshal(genericEnvelope{Type: "relay_game_start", Payload: map[string]string{"roomId": roomID}})
+	if err != nil {
+		return
+	}
+	_ = g.bus.Publish(context.Background(), roomID, data)
+}
+
+// sendGameStartToLocalClients は Redis 上の Playing 状態に合わせ、ローカル接続へだけ role 付き game_start を送る。
+func (g *Gateway) sendGameStartToLocalClients(roomID string) {
+	gs, err := g.usecase.GetGameState(context.Background(), roomID)
+	if err != nil || gs.Phase != entity.PhasePlaying {
+		return
+	}
+	enemyID := gs.EnemyPlayerID
+	allyTheme, enemyTheme := gs.AllyTheme, gs.EnemyTheme
+
+	g.mu.RLock()
+	clients := g.rooms[roomID]
+	for client := range clients {
+		role := "citizen"
+		theme := allyTheme
+		if client.playerID == enemyID {
+			role = "enemy"
+			theme = enemyTheme
+		}
+		payload := map[string]interface{}{
+			"phase":         gs.Phase,
+			"gameEnd":       gs.GameEnd,
+			"playerCount":   g.connectedCount(roomID),
+			"role":          role,
+			"enemyPlayerId": "",
+			"theme":         theme,
+		}
+		g.sendToClient(client, genericEnvelope{Type: "game_start", Payload: payload})
+	}
+	g.mu.RUnlock()
 }
 
 // buildCheckOrigin は WS_ALLOWED_ORIGINS 環境変数でオリジン制限を構築する。
@@ -173,9 +279,12 @@ func (g *Gateway) Handle(c *gin.Context) {
 		playerID: playerID,
 	}
 	g.register(client)
+	if g.presence != nil {
+		_ = g.presence.Add(context.Background(), roomID, playerID)
+	}
 
 	gs, _ := g.usecase.GetGameState(context.Background(), roomID)
-	gs.PlayerCount = g.roomClientCount(roomID)
+	gs.PlayerCount = g.connectedCount(roomID)
 	payload := g.buildGameStatePayload(roomID, gs)
 	g.sendToClient(client, genericEnvelope{
 		Type:    "game_state",
@@ -195,6 +304,9 @@ func shouldRemovePlayerOnSocketClose(phase entity.GamePhase) bool {
 
 func (g *Gateway) readPump(client *Client) {
 	defer func() {
+		if g.presence != nil {
+			_ = g.presence.Remove(context.Background(), client.roomID, client.playerID)
+		}
 		g.unregister(client)
 		gs, err := g.usecase.GetGameState(context.Background(), client.roomID)
 		if err == nil && shouldRemovePlayerOnSocketClose(gs.Phase) {
@@ -207,6 +319,9 @@ func (g *Gateway) readPump(client *Client) {
 	client.conn.SetReadLimit(maxMessageSize)
 	_ = client.conn.SetReadDeadline(time.Now().Add(pongWait))
 	client.conn.SetPongHandler(func(string) error {
+		if g.presence != nil {
+			_ = g.presence.Touch(context.Background(), client.roomID, client.playerID)
+		}
 		return client.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
@@ -223,6 +338,10 @@ func (g *Gateway) readPump(client *Client) {
 			g.handleVote(client, msg.Payload)
 		case "vote_extend":
 			g.handleVoteExtend(client)
+		case "heartbeat":
+			if g.presence != nil {
+				_ = g.presence.Touch(context.Background(), client.roomID, client.playerID)
+			}
 		case "landmarks":
 			g.handleLandmarks(client, msg.Payload)
 		}
@@ -252,6 +371,9 @@ func (g *Gateway) handleMove(client *Client, raw json.RawMessage) {
 	})
 	if err != nil {
 		return
+	}
+	if g.presence != nil {
+		_ = g.presence.Touch(context.Background(), client.roomID, client.playerID)
 	}
 	g.broadcastSnapshot(client.roomID, snapshot)
 }
@@ -295,53 +417,30 @@ const voteExtendExtraMs int64 = 10_000
 
 // voteMajorityThreshold は過半数に必要な人数（⌊n/2⌋+1）。例: 5→3, 4→3, 3→2, 2→2, 1→1
 func voteMajorityThreshold(n int) int {
-	if n <= 0 {
-		return 1
-	}
-	return n/2 + 1
+	return entity.VoteExtendMajorityThreshold(n)
 }
 
 func (g *Gateway) handleVoteExtend(client *Client) {
-	gs, err := g.usecase.GetGameState(context.Background(), client.roomID)
-	if err != nil || gs.Phase != entity.PhaseVoting {
+	ctx := context.Background()
+	live := g.connectedCount(client.roomID)
+	ve, err := g.usecase.ApplyVoteExtend(ctx, client.roomID, client.playerID, voteExtendExtraMs, live)
+	if err != nil {
 		return
 	}
-	if gs.VoteExtendUsed {
-		g.broadcastVoteExtendUpdate(client.roomID, gs, false)
+	if ve.Silent {
 		return
 	}
-	if len(gs.RoundPlayerIDs) > 0 && !playerIDInList(client.playerID, gs.RoundPlayerIDs) {
-		return
+	if ve.MajorityApplied {
+		g.scheduleVotingEnd(client.roomID, ve.State.VoteEnd)
 	}
-	for _, id := range gs.VoteExtendRequestPlayerIDs {
-		if id == client.playerID {
-			return
-		}
-	}
-	gs.VoteExtendRequestPlayerIDs = append(gs.VoteExtendRequestPlayerIDs, client.playerID)
-	sort.Strings(gs.VoteExtendRequestPlayerIDs)
-
-	n := len(gs.RoundPlayerIDs)
-	if n == 0 {
-		n = g.roomClientCount(client.roomID)
-	}
-	required := voteMajorityThreshold(n)
-	applied := false
-	if len(gs.VoteExtendRequestPlayerIDs) >= required {
-		gs.VoteExtendUsed = true
-		gs.VoteEnd += voteExtendExtraMs
-		gs.VoteExtendRequestPlayerIDs = nil
-		applied = true
-		g.scheduleVotingEnd(client.roomID, gs.VoteEnd)
-	}
-	_ = g.usecase.SetGameState(context.Background(), client.roomID, gs)
-	g.broadcastVoteExtendUpdate(client.roomID, gs, applied)
+	g.syncDeadlines(client.roomID)
+	g.broadcastVoteExtendUpdate(client.roomID, ve.State, ve.MajorityApplied)
 }
 
 func (g *Gateway) broadcastVoteExtendUpdate(roomID string, gs entity.GameState, applied bool) {
 	n := len(gs.RoundPlayerIDs)
 	if n == 0 {
-		n = g.roomClientCount(roomID)
+		n = g.connectedCount(roomID)
 	}
 	req := gs.VoteExtendRequestPlayerIDs
 	if req == nil {
@@ -360,6 +459,10 @@ func (g *Gateway) broadcastVoteExtendUpdate(roomID string, gs entity.GameState, 
 }
 
 func (g *Gateway) scheduleVotingEnd(roomID string, voteEndUnixMs int64) {
+	if g.deadline != nil {
+		g.syncDeadlines(roomID)
+		return
+	}
 	g.cancelGameTimer(roomID)
 	rem := time.Until(time.UnixMilli(voteEndUnixMs))
 	if rem < 0 {
@@ -387,19 +490,19 @@ func (g *Gateway) handleLandmarks(client *Client, raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &lp); err != nil {
 		return
 	}
-	items := make([]usecase.LandmarkInfo, 0, len(lp.Landmarks))
+	items := make([]entity.Landmark, 0, len(lp.Landmarks))
 	for _, l := range lp.Landmarks {
-		items = append(items, usecase.LandmarkInfo{Type: l.Type, X: l.X, Z: l.Z})
+		items = append(items, entity.Landmark{Type: l.Type, X: l.X, Z: l.Z})
 	}
-	g.landmarksMu.Lock()
-	g.landmarks[client.roomID] = items
-	g.landmarksMu.Unlock()
+	_ = g.usecase.SetLandmarks(context.Background(), client.roomID, items)
 }
 
-func (g *Gateway) getRoomLandmarks(roomID string) []usecase.LandmarkInfo {
-	g.landmarksMu.RLock()
-	defer g.landmarksMu.RUnlock()
-	return g.landmarks[roomID]
+func (g *Gateway) getRoomLandmarks(roomID string) []entity.Landmark {
+	lm, err := g.usecase.GetLandmarks(context.Background(), roomID)
+	if err != nil || len(lm) == 0 {
+		return nil
+	}
+	return lm
 }
 
 func (g *Gateway) writePump(client *Client) {
@@ -445,19 +548,17 @@ func (g *Gateway) unregister(client *Client) {
 		g.mu.Unlock()
 		return
 	}
+	if _, exists := roomClients[client]; !exists {
+		g.mu.Unlock()
+		return
+	}
 	delete(roomClients, client)
-	close(client.send)
+	client.closeOnce.Do(func() { close(client.send) })
 	empty := len(roomClients) == 0
 	if empty {
 		delete(g.rooms, client.roomID)
 	}
 	g.mu.Unlock()
-
-	if empty {
-		g.landmarksMu.Lock()
-		delete(g.landmarks, client.roomID)
-		g.landmarksMu.Unlock()
-	}
 }
 
 func (g *Gateway) roomClientCount(roomID string) int {
@@ -517,7 +618,7 @@ func (g *Gateway) buildGameStatePayload(roomID string, gs entity.GameState) map[
 	if gs.Phase == entity.PhaseVoting {
 		n := len(gs.RoundPlayerIDs)
 		if n == 0 {
-			n = g.roomClientCount(roomID)
+			n = g.connectedCount(roomID)
 		}
 		ids := gs.VoteExtendRequestPlayerIDs
 		if ids == nil {
@@ -546,8 +647,8 @@ func (g *Gateway) checkGameTransition(roomID string) {
 		return
 	}
 
-	count := g.roomClientCount(roomID)
-	gs.PlayerCount = count
+	count := g.connectedCount(roomID)
+	ctx := context.Background()
 
 	switch gs.Phase {
 	case entity.PhaseWaiting, "":
@@ -559,8 +660,14 @@ func (g *Gateway) checkGameTransition(roomID string) {
 			g.startCountdown(roomID)
 			return
 		}
-		_ = g.usecase.SetGameState(context.Background(), roomID, gs)
-		g.broadcastGameState(roomID, gs)
+		gs2, err := g.usecase.PatchGameState(ctx, roomID, func(st *entity.GameState) error {
+			st.PlayerCount = count
+			return nil
+		})
+		if err != nil {
+			return
+		}
+		g.broadcastGameState(roomID, gs2)
 	case entity.PhaseCountdown:
 		if count >= g.rules.MaxPlayers {
 			g.cancelGameTimer(roomID)
@@ -569,18 +676,34 @@ func (g *Gateway) checkGameTransition(roomID string) {
 		}
 		if count < g.rules.MinPlayers {
 			g.cancelGameTimer(roomID)
-			gs.Phase = entity.PhaseWaiting
-			gs.CountdownEnd = 0
-			_ = g.usecase.SetGameState(context.Background(), roomID, gs)
-			g.broadcastGameState(roomID, gs)
+			gs2, err := g.usecase.PatchGameState(ctx, roomID, func(st *entity.GameState) error {
+				st.Phase = entity.PhaseWaiting
+				st.CountdownEnd = 0
+				st.PlayerCount = count
+				return nil
+			})
+			if err != nil {
+				return
+			}
+			g.broadcastGameState(roomID, gs2)
+			g.syncDeadlines(roomID)
 			return
 		}
-		_ = g.usecase.SetGameState(context.Background(), roomID, gs)
-		g.broadcastGameState(roomID, gs)
+		gs2, err := g.usecase.PatchGameState(ctx, roomID, func(st *entity.GameState) error {
+			st.PlayerCount = count
+			return nil
+		})
+		if err != nil {
+			return
+		}
+		g.broadcastGameState(roomID, gs2)
 	}
 }
 
 func (g *Gateway) cancelGameTimer(roomID string) {
+	if g.deadline != nil {
+		return
+	}
 	g.gameMu.Lock()
 	defer g.gameMu.Unlock()
 	if gc, ok := g.gameCtxs[roomID]; ok {
@@ -590,6 +713,26 @@ func (g *Gateway) cancelGameTimer(roomID string) {
 }
 
 func (g *Gateway) startCountdown(roomID string) {
+	if g.deadline != nil {
+		gs0, _ := g.usecase.GetGameState(context.Background(), roomID)
+		if gs0.Phase == entity.PhaseCountdown && gs0.CountdownEnd > time.Now().UnixMilli() {
+			return
+		}
+		now := time.Now()
+		cd := g.rules.MatchCountdown
+		gs := entity.GameState{
+			Phase:        entity.PhaseCountdown,
+			CountdownEnd: now.Add(cd).UnixMilli(),
+			PlayerCount:  g.connectedCount(roomID),
+		}
+		if err := g.usecase.SetGameState(context.Background(), roomID, gs); err != nil {
+		log.Printf("[ws] SetGameState error (room=%s): %v", roomID, err)
+	}
+		g.broadcastGameState(roomID, gs)
+		g.syncDeadlines(roomID)
+		return
+	}
+
 	g.gameMu.Lock()
 	if _, ok := g.gameCtxs[roomID]; ok {
 		g.gameMu.Unlock()
@@ -604,9 +747,11 @@ func (g *Gateway) startCountdown(roomID string) {
 	gs := entity.GameState{
 		Phase:        entity.PhaseCountdown,
 		CountdownEnd: now.Add(cd).UnixMilli(),
-		PlayerCount:  g.roomClientCount(roomID),
+		PlayerCount:  g.connectedCount(roomID),
 	}
-	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
+	if err := g.usecase.SetGameState(context.Background(), roomID, gs); err != nil {
+		log.Printf("[ws] SetGameState error (room=%s): %v", roomID, err)
+	}
 	g.broadcastGameState(roomID, gs)
 
 	go func() {
@@ -622,20 +767,34 @@ func (g *Gateway) startCountdown(roomID string) {
 }
 
 func (g *Gateway) startGame(roomID string) {
-	g.mu.RLock()
-	clients := g.rooms[roomID]
-	roundIDs := make(map[string]struct{}, len(clients))
-	for c := range clients {
-		roundIDs[c.playerID] = struct{}{}
-	}
-	g.mu.RUnlock()
-
-	roundPlayerIDs := make([]string, 0, len(roundIDs))
-	for id := range roundIDs {
-		roundPlayerIDs = append(roundPlayerIDs, id)
-	}
-	if len(roundPlayerIDs) == 0 {
-		return
+	var roundPlayerIDs []string
+	if g.presence != nil {
+		type active interface {
+			ActivePlayerIDs(context.Context, string) ([]string, error)
+		}
+		pa, ok := g.presence.(active)
+		if !ok {
+			return
+		}
+		var err error
+		roundPlayerIDs, err = pa.ActivePlayerIDs(context.Background(), roomID)
+		if err != nil || len(roundPlayerIDs) == 0 {
+			return
+		}
+	} else {
+		g.mu.RLock()
+		clients := g.rooms[roomID]
+		roundIDs := make(map[string]struct{}, len(clients))
+		for c := range clients {
+			roundIDs[c.playerID] = struct{}{}
+		}
+		g.mu.RUnlock()
+		for id := range roundIDs {
+			roundPlayerIDs = append(roundPlayerIDs, id)
+		}
+		if len(roundPlayerIDs) == 0 {
+			return
+		}
 	}
 	sort.Strings(roundPlayerIDs)
 	idx, ok := uniformCryptoIndex(len(roundPlayerIDs))
@@ -659,13 +818,22 @@ func (g *Gateway) startGame(roomID string) {
 		AllyTheme:      allyTheme,
 		EnemyTheme:     enemyTheme,
 		GameEnd:        now.Add(gd).UnixMilli(),
-		PlayerCount:    g.roomClientCount(roomID),
+		PlayerCount:    g.connectedCount(roomID),
 		Votes:          make(map[string]string),
 	}
-	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
+	if err := g.usecase.SetGameState(context.Background(), roomID, gs); err != nil {
+		log.Printf("[ws] SetGameState error (room=%s): %v", roomID, err)
+	}
+
+	if g.deadline != nil {
+		g.sendGameStartToLocalClients(roomID)
+		g.maybePublishRelayGameStart(roomID)
+		g.syncDeadlines(roomID)
+		return
+	}
 
 	g.mu.RLock()
-	clients = g.rooms[roomID]
+	clients := g.rooms[roomID]
 	for client := range clients {
 		role := "citizen"
 		theme := allyTheme
@@ -681,7 +849,7 @@ func (g *Gateway) startGame(roomID string) {
 			"enemyPlayerId": "",
 			"theme":         theme,
 		}
-		g.sendToClientRaw(client, genericEnvelope{Type: "game_start", Payload: payload})
+		g.sendToClient(client, genericEnvelope{Type: "game_start", Payload: payload})
 	}
 	g.mu.RUnlock()
 
@@ -735,6 +903,9 @@ func (g *Gateway) runGameTimers(ctx context.Context, roomID string) {
 
 func (g *Gateway) startVoting(roomID string) {
 	gs, _ := g.usecase.GetGameState(context.Background(), roomID)
+	if gs.Phase != entity.PhasePlaying {
+		return
+	}
 	now := time.Now()
 	vd := g.rules.VoteDuration
 	gs.Phase = entity.PhaseVoting
@@ -742,7 +913,9 @@ func (g *Gateway) startVoting(roomID string) {
 	gs.Votes = make(map[string]string)
 	gs.VoteExtendUsed = false
 	gs.VoteExtendRequestPlayerIDs = nil
-	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
+	if err := g.usecase.SetGameState(context.Background(), roomID, gs); err != nil {
+		log.Printf("[ws] SetGameState error (room=%s): %v", roomID, err)
+	}
 
 	snapshot, _ := g.usecase.Snapshot(context.Background(), roomID)
 	roundSet := roundPlayerIDSet(gs.RoundPlayerIDs)
@@ -783,14 +956,25 @@ func (g *Gateway) finishVoting(roomID string) {
 	}
 
 	gs, _ := g.usecase.GetGameState(context.Background(), roomID)
+	if gs.Phase != entity.PhaseVoting {
+		return
+	}
+	now := time.Now()
 	gs.Phase = entity.PhaseResults
-	_ = g.usecase.SetGameState(context.Background(), roomID, gs)
+	gs.ResultEnd = now.Add(g.rules.ResultDuration).UnixMilli()
+	if err := g.usecase.SetGameState(context.Background(), roomID, gs); err != nil {
+		log.Printf("[ws] SetGameState error (room=%s): %v", roomID, err)
+	}
+	g.syncDeadlines(roomID)
 
 	g.broadcastToRoom(roomID, genericEnvelope{
 		Type:    "vote_result",
 		Payload: result,
 	})
 
+	if g.deadline != nil {
+		return
+	}
 	go func() {
 		time.Sleep(g.rules.ResultDuration)
 		g.dissolveRoomAfterGame(roomID)
@@ -816,13 +1000,12 @@ func (g *Gateway) dissolveRoomAfterGame(roomID string) {
 		})
 	}
 
+	if g.deadline != nil {
+		_ = g.deadline.ClearRoom(context.Background(), roomID)
+	}
 	if err := g.usecase.DeleteRoom(context.Background(), roomID); err != nil {
 		log.Printf("[ws] DeleteRoom %s: %v", roomID, err)
 	}
-
-	g.landmarksMu.Lock()
-	delete(g.landmarks, roomID)
-	g.landmarksMu.Unlock()
 
 	for _, c := range list {
 		_ = c.conn.Close()
@@ -834,16 +1017,11 @@ func (g *Gateway) broadcastSnapshot(roomID string, snapshot entity.RoomSnapshot)
 	if err != nil {
 		return
 	}
-	g.mu.RLock()
-	roomClients := g.rooms[roomID]
-	g.mu.RUnlock()
-	for client := range roomClients {
-		select {
-		case client.send <- data:
-		default:
-			go g.unregister(client)
-		}
+	if g.bus != nil {
+		_ = g.bus.Publish(context.Background(), roomID, data)
+		return
 	}
+	g.deliverRawToRoom(roomID, data)
 }
 
 func (g *Gateway) broadcastToRoom(roomID string, envelope genericEnvelope) {
@@ -851,16 +1029,11 @@ func (g *Gateway) broadcastToRoom(roomID string, envelope genericEnvelope) {
 	if err != nil {
 		return
 	}
-	g.mu.RLock()
-	roomClients := g.rooms[roomID]
-	g.mu.RUnlock()
-	for client := range roomClients {
-		select {
-		case client.send <- data:
-		default:
-			go g.unregister(client)
-		}
+	if g.bus != nil {
+		_ = g.bus.Publish(context.Background(), roomID, data)
+		return
 	}
+	g.deliverRawToRoom(roomID, data)
 }
 
 func (g *Gateway) sendToClient(client *Client, envelope genericEnvelope) {
@@ -874,15 +1047,62 @@ func (g *Gateway) sendToClient(client *Client, envelope genericEnvelope) {
 	}
 }
 
-func (g *Gateway) sendToClientRaw(client *Client, envelope genericEnvelope) {
-	data, err := json.Marshal(envelope)
-	if err != nil {
+// --- scheduler.Callbacks（Redis 期限ワーカー）
+
+func (g *Gateway) OnCountdownEnd(ctx context.Context, roomID string) {
+	gs, err := g.usecase.GetGameState(ctx, roomID)
+	if err != nil || gs.Phase != entity.PhaseCountdown {
 		return
 	}
-	select {
-	case client.send <- data:
-	default:
+	g.startGame(roomID)
+}
+
+func (g *Gateway) OnGameEnd(ctx context.Context, roomID string) {
+	gs, err := g.usecase.GetGameState(ctx, roomID)
+	if err != nil || gs.Phase != entity.PhasePlaying {
+		return
 	}
+	g.startVoting(roomID)
+}
+
+func (g *Gateway) OnVoteEnd(ctx context.Context, roomID string) {
+	gs, err := g.usecase.GetGameState(ctx, roomID)
+	if err != nil || gs.Phase != entity.PhaseVoting {
+		return
+	}
+	g.finishVoting(roomID)
+}
+
+func (g *Gateway) OnResultEnd(ctx context.Context, roomID string) {
+	gs, err := g.usecase.GetGameState(ctx, roomID)
+	if err != nil || gs.Phase != entity.PhaseResults {
+		return
+	}
+	g.dissolveRoomAfterGame(roomID)
+}
+
+func (g *Gateway) OnHintTick(ctx context.Context, roomID string, seq int) {
+	gs, err := g.usecase.GetGameState(ctx, roomID)
+	if err != nil || gs.Phase != entity.PhasePlaying {
+		return
+	}
+	log.Printf("[ws] generating hint #%d for room %s (distributed)", seq, roomID)
+	hint, err := g.usecase.GenerateHint(ctx, roomID, seq, g.getRoomLandmarks(roomID))
+	if err != nil {
+		log.Printf("[ws] hint generation error for room %s: %v", roomID, err)
+		return
+	}
+	gs2, err := g.usecase.GetGameState(ctx, roomID)
+	if err != nil || gs2.Phase != entity.PhasePlaying {
+		return
+	}
+	g.broadcastToRoom(roomID, genericEnvelope{Type: "hint", Payload: hint})
+
+	if g.deadline == nil {
+		return
+	}
+	nextAt := time.Now().Add(g.rules.HintInterval).UnixMilli()
+	_ = g.deadline.ScheduleNextHint(ctx, roomID, seq+1, nextAt, gs2.GameEnd)
 }
 
 // uniformCryptoIndex は [0, n) の一様な整数を crypto/rand.Int で返す（単純な % より偏りがない）。

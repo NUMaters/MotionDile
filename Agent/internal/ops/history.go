@@ -26,6 +26,8 @@ type HintHistoryStore interface {
 	GetRecentSummary(roomID string, limit int) RecentHintSummary
 }
 
+const maxRecordsPerRoom = 100
+
 type MemoryHintHistoryStore struct {
 	mu      sync.RWMutex
 	records map[string][]HintRecord
@@ -43,7 +45,30 @@ func (s *MemoryHintHistoryStore) Append(record HintRecord) {
 
 	record.Text = strings.TrimSpace(record.Text)
 	record.GeneratedAt = time.Now()
-	s.records[record.RoomID] = append(s.records[record.RoomID], record)
+	recs := append(s.records[record.RoomID], record)
+	if len(recs) > maxRecordsPerRoom {
+		recs = recs[len(recs)-maxRecordsPerRoom:]
+	}
+	s.records[record.RoomID] = recs
+}
+
+// PurgeRoom removes all history records for a room (call after game ends).
+func (s *MemoryHintHistoryStore) PurgeRoom(roomID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.records, roomID)
+}
+
+// PurgeStale removes rooms whose latest record is older than maxAge.
+func (s *MemoryHintHistoryStore) PurgeStale(maxAge time.Duration) {
+	cutoff := time.Now().Add(-maxAge)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for roomID, recs := range s.records {
+		if len(recs) == 0 || recs[len(recs)-1].GeneratedAt.Before(cutoff) {
+			delete(s.records, roomID)
+		}
+	}
 }
 
 func (s *MemoryHintHistoryStore) GetRecentSummary(roomID string, limit int) RecentHintSummary {

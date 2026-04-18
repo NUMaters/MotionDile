@@ -28,6 +28,14 @@ let lastCameraErrorMessage = '';
 let lastHandTime = 0;
 
 export const handState = { mouthOpenness: 0, neckYaw: 0, neckPitch: 0, detected: false };
+
+const _tmpVWrist = new THREE.Vector3();
+const _tmpVMiddleBase = new THREE.Vector3();
+const _tmpVMiddleTip = new THREE.Vector3();
+const _tmpVThumbTip = new THREE.Vector3();
+const _tmpVecToMiddle = new THREE.Vector3();
+const _tmpVecToThumb = new THREE.Vector3();
+const _tmpHandAxis = new THREE.Vector3();
 export let smoothNeckYaw = 0;
 export let smoothNeckPitch = 0;
 
@@ -320,13 +328,13 @@ function processHandResults(results: HandLandmarkerVideoResult) {
 
   const lm = rawLm.map(p => ({ x: 1 - p.x, y: 1 - p.y, z: p.z }));
 
-  const vWrist = new THREE.Vector3(lm[0].x, lm[0].y, lm[0].z);
-  const vMiddleBase = new THREE.Vector3(lm[9].x, lm[9].y, lm[9].z);
-  const vMiddleTip = new THREE.Vector3(lm[12].x, lm[12].y, lm[12].z);
-  const vThumbTip = new THREE.Vector3(lm[4].x, lm[4].y, lm[4].z);
+  const vWrist = _tmpVWrist.set(lm[0].x, lm[0].y, lm[0].z);
+  const vMiddleBase = _tmpVMiddleBase.set(lm[9].x, lm[9].y, lm[9].z);
+  const vMiddleTip = _tmpVMiddleTip.set(lm[12].x, lm[12].y, lm[12].z);
+  const vThumbTip = _tmpVThumbTip.set(lm[4].x, lm[4].y, lm[4].z);
 
-  const vecToMiddle = new THREE.Vector3().subVectors(vMiddleTip, vMiddleBase).normalize();
-  const vecToThumb = new THREE.Vector3().subVectors(vThumbTip, vMiddleBase).normalize();
+  const vecToMiddle = _tmpVecToMiddle.subVectors(vMiddleTip, vMiddleBase).normalize();
+  const vecToThumb = _tmpVecToThumb.subVectors(vThumbTip, vMiddleBase).normalize();
   const mouthAngle = vecToMiddle.angleTo(vecToThumb);
 
   const lo = HAND_MOUTH_ANGLE_CLOSED;
@@ -336,7 +344,7 @@ function processHandResults(results: HandLandmarkerVideoResult) {
   smoothMouthOpen += (openness - smoothMouthOpen) * HAND_MOUTH_OUTPUT_SMOOTH;
   handState.mouthOpenness = smoothMouthOpen;
 
-  const handAxis = new THREE.Vector3().subVectors(vMiddleTip, vWrist).normalize();
+  const handAxis = _tmpHandAxis.subVectors(vMiddleTip, vWrist).normalize();
   let currentYaw = Math.asin(clamp(handAxis.x, -1, 1));
   let currentPitch = Math.asin(clamp(handAxis.y, -1, 1));
 

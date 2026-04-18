@@ -24,6 +24,8 @@ import {
 } from './name-labels';
 import { getWorldLandmarks } from './world';
 
+import { getOrCreatePlayerId } from './utils';
+
 const LAST_ACTIVE_ROOM_KEY = 'waniar:last-active-room-id';
 /** 切断直前のローカル座標（リロード直後、サーバ値と併用） */
 const LAST_MP_SPAWN_KEY = 'waniar:last-mp-spawn';
@@ -144,6 +146,9 @@ const remoteNeckDeltaQuat = new THREE.Quaternion();
 
 let gameSocket: WebSocket | null = null;
 let wsReconnectTimer: number | null = null;
+/** 分散 backend 用プレゼンス更新（move が無い待機中も生存を維持） */
+let wsHeartbeatTimer: number | null = null;
+const WS_HEARTBEAT_INTERVAL_MS = 25_000;
 /** `cleanup()` 等で閉じたときは `close` イベントで自動再接続しない（未参加のままゲームが進むのを防ぐ） */
 let manualWsClose = false;
 /** 「ゲーム参加」から `leaveRoom`／切断まで true。未参加時は WS メッセージを無視 */
@@ -159,14 +164,7 @@ let localModel: THREE.Object3D | null = null;
 let lastAppliedLocalTintHex = '';
 export let localPlayerColor = '';
 
-const playerId = (() => {
-  const key = 'waniar:player-id';
-  const existing = localStorage.getItem(key);
-  if (existing) return existing;
-  const generated = `p-${Math.random().toString(36).slice(2, 10)}`;
-  localStorage.setItem(key, generated);
-  return generated;
-})();
+const playerId = getOrCreatePlayerId();
 
 export function getPlayerId(): string { return playerId; }
 
@@ -555,6 +553,12 @@ export function connectGameSocket(): void {
 
   ws.addEventListener('open', () => {
     setMultiplayerStatus(`部屋: ${activeRoomId} 接続済み`);
+    if (wsHeartbeatTimer != null) window.clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = window.setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN && multiplayerSessionActive) {
+        ws.send(JSON.stringify({ type: 'heartbeat' }));
+      }
+    }, WS_HEARTBEAT_INTERVAL_MS);
     const lm = getWorldLandmarks();
     if (lm.length > 0) {
       ws.send(JSON.stringify({ type: 'landmarks', payload: { landmarks: lm } }));
@@ -599,6 +603,10 @@ export function connectGameSocket(): void {
   });
 
   ws.addEventListener('close', () => {
+    if (wsHeartbeatTimer != null) {
+      window.clearInterval(wsHeartbeatTimer);
+      wsHeartbeatTimer = null;
+    }
     gameSocket = null;
     if (manualWsClose) {
       manualWsClose = false;
@@ -870,6 +878,10 @@ export function cleanup(options?: {
   multiplayerSessionActive = false;
   if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
   wsReconnectTimer = null;
+  if (wsHeartbeatTimer != null) {
+    window.clearInterval(wsHeartbeatTimer);
+    wsHeartbeatTimer = null;
+  }
   manualWsClose = true;
   if (gameSocket) gameSocket.close();
   gameSocket = null;

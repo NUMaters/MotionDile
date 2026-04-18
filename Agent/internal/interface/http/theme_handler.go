@@ -1,20 +1,25 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 
 	"agent/internal/contract"
 	"agent/internal/domain"
-	"agent/internal/usecase"
 )
 
-type ThemeHandler struct {
-	uc *usecase.ThemeUsecase
+// ThemeGenerator abstracts the theme generation usecase for testability.
+type ThemeGenerator interface {
+	Generate(ctx context.Context, req domain.ThemeRequest) (domain.ThemeResponse, error)
 }
 
-func NewThemeHandler(uc *usecase.ThemeUsecase) *ThemeHandler {
+type ThemeHandler struct {
+	uc ThemeGenerator
+}
+
+func NewThemeHandler(uc ThemeGenerator) *ThemeHandler {
 	return &ThemeHandler{uc: uc}
 }
 

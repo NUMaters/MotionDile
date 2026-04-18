@@ -1,24 +1,16 @@
-/** 画面上部のステータス行は廃止。#hud-text が無い場合は何もしない（互換 API のみ）。 */
-const hudText = document.getElementById('hud-text') as HTMLElement | null;
+/**
+ * HUD ステータス行は廃止済み。#hud-text は DOM に存在しない。
+ * network.ts / hand-tracking.ts からの呼び出し互換のため API だけ残す (no-op)。
+ */
 
-let handModelStatus = '手: MediaPipe（カメラ前）';
-let multiplayerStatus = '';
-
-export function setHandModelStatus(status: string): void {
-  handModelStatus = status;
-  refresh();
+export function setHandModelStatus(_status: string): void {
+  /* no-op */
 }
 
-export function setMultiplayerStatus(status: string): void {
-  multiplayerStatus = status;
-  refresh();
-}
-
-function refresh(): void {
-  if (!hudText) return;
-  hudText.textContent = `${handModelStatus} | ${multiplayerStatus}`;
+export function setMultiplayerStatus(_status: string): void {
+  /* no-op */
 }
 
 export function refreshHud(): void {
-  refresh();
+  /* no-op */
 }
