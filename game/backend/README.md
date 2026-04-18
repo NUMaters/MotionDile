@@ -58,11 +58,25 @@ air -c .air.toml
 
 デフォルトは `127.0.0.1:8090`。`GAME_BACKEND_ADDR` で変更できます。
 
+## 複数インスタンス（Redis）
+
+`GAME_REDIS_ADDR` を設定すると、部屋状態は **Redis** が正本になり、**Pub/Sub** で各プロセスの WebSocket へ同じイベントを届け、**`internal/scheduler`** が Redis ZSET（`{prefix}:timers:due`）と分散ロックでカウントダウン・対戦終了・投票締め・結果後の解体を処理します。接続人数は **プレゼンス ZSET**（期限付き）で共有し、ラウンド参加者はオンラインの `playerId` から決まります。**`vote_extend`** は `ApplyVoteExtend` で blob を **1 回の WATCH トランザクション**にまとめ、人数は Round 外なら同一トランザクション内で **presence ZCARD** を参照します。待機中の **`game_state` 人数更新**は `PatchGameState` で原子的に `PlayerCount` だけ更新します。未設定時は従来どおり **インメモリ** + ローカル goroutine タイマーです。
+
+キー例（プレフィックス既定 `waniar`、`GAME_REDIS_KEY_PREFIX` で変更可）:
+
+- `waniar:room:{roomId}:blob` — プレイヤー JSON + `GameState` + version
+- `waniar:rooms:index` / `waniar:rooms:lobby` — 部屋一覧・ロビー候補
+- `waniar:room:{roomId}:presence` — WebSocket オンライン（ZSET、スコアは失効時刻 ms。**TTL 約 90s**。サーバの WebSocket **Ping に対する Pong** 受信時・クライアントが送る **`heartbeat` メッセージ**・`move` ごとに `ZADD` で更新）
+- `waniar:timers:due` — 期限処理用 ZSET
+- `waniar:bus:room:{roomId}` — Pub/Sub チャンネル（購読は `PSUBSCRIBE waniar:bus:room:*`）
+
 ## 環境変数
 
 | 変数 | 説明 | デフォルト |
 |------|------|-----------|
 | `GAME_BACKEND_ADDR` | リッスンアドレス | `127.0.0.1:8090` |
+| `GAME_REDIS_ADDR` | Redis アドレス（例 `127.0.0.1:6379`）。**未設定でインメモリ** | 空 |
+| `GAME_REDIS_KEY_PREFIX` | Redis キー接頭辞 | `waniar` |
 | `AGENT_URL` | Agent サーバーの URL | `http://127.0.0.1:8091` |
 | `WS_ALLOWED_ORIGINS` | WebSocket 許可オリジン（カンマ区切り。空 or `*` で全許可） | `*`（開発用） |
 | `WANIAR_GAME_DURATION_SEC` | 対戦プレイ時間（秒） | `60` |

@@ -1,2 +1,10 @@
 # Vitest 等のカバレッジ HTML はリポジトリに含めず、言語統計からも除外扱いにする
 coverage/** linguist-generated=true
+
+# Binary assets — ensure correct diff/merge behaviour
+*.glb binary
+*.fbx binary
+*.png binary
+*.jpg binary
+*.blend binary
+*.drawio linguist-generated=true

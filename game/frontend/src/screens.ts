@@ -565,7 +565,7 @@ export function startVoting(
         (p) => {
           const label = (p.displayName || '').trim() || p.playerId.slice(0, 8);
           const col = p.color || FALLBACK_PLAYER_COLOR;
-          return `<div class="vote-card" data-pid="${p.playerId}" data-color="${col}">
+          return `<div class="vote-card" data-pid="${escapeHtml(p.playerId)}" data-color="${escapeHtml(col)}">
             <div class="vote-preview-mount"></div>
             <div class="vote-name">${escapeHtml(label)}</div>
           </div>`;

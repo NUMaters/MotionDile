@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"math/rand"
 	"sort"
 	"strings"
@@ -12,15 +11,16 @@ import (
 	"waniar/game-backend/internal/domain/repository"
 )
 
+// 互換のため re-export（テストが memory.ErrVoteAlreadyCast を参照している場合）
+var ErrVoteAlreadyCast = repository.ErrVoteAlreadyCast
+
 var _ repository.RoomRepository = (*RoomRepository)(nil)
 
-// ErrVoteAlreadyCast は同一プレイヤーからの2回目以降の投票を拒否するときに返す。
-var ErrVoteAlreadyCast = errors.New("vote already cast")
-
 type roomState struct {
-	version int64
-	players map[string]entity.PlayerState
-	game    entity.GameState
+	version    int64
+	players    map[string]entity.PlayerState
+	game       entity.GameState
+	landmarks  []entity.Landmark
 }
 
 type RoomRepository struct {
@@ -66,12 +66,7 @@ func pickUnusedColor(room *roomState) string {
 	for _, p := range room.players {
 		used[p.Color] = true
 	}
-	for _, c := range entity.PlayerColors {
-		if !used[c] {
-			return c
-		}
-	}
-	return entity.PlayerColors[len(room.players)%len(entity.PlayerColors)]
+	return entity.PickUnusedColor(used, len(room.players))
 }
 
 func (r *RoomRepository) UpsertState(_ context.Context, roomID string, state entity.PlayerState) (entity.RoomSnapshot, error) {
@@ -169,7 +164,7 @@ func (r *RoomRepository) CastVote(_ context.Context, roomID, voterID, votedForID
 		room.game.Votes = make(map[string]string)
 	}
 	if _, exists := room.game.Votes[voterID]; exists {
-		return entity.GameState{}, ErrVoteAlreadyCast
+		return entity.GameState{}, repository.ErrVoteAlreadyCast
 	}
 	room.game.Votes[voterID] = votedForID
 	gs := room.game
@@ -207,6 +202,92 @@ func (r *RoomRepository) DeleteRoom(_ context.Context, roomID string) error {
 	defer r.mu.Unlock()
 	delete(r.rooms, roomID)
 	return nil
+}
+
+func (r *RoomRepository) SetLandmarks(_ context.Context, roomID string, landmarks []entity.Landmark) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room := r.ensureRoom(roomID)
+	room.landmarks = append([]entity.Landmark(nil), landmarks...)
+	return nil
+}
+
+func (r *RoomRepository) GetLandmarks(_ context.Context, roomID string) ([]entity.Landmark, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	room, ok := r.rooms[roomID]
+	if !ok || len(room.landmarks) == 0 {
+		return nil, nil
+	}
+	out := append([]entity.Landmark(nil), room.landmarks...)
+	return out, nil
+}
+
+func voteExtendMajorityThreshold(n int) int {
+	return entity.VoteExtendMajorityThreshold(n)
+}
+
+func playerIDInSlice(id string, list []string) bool {
+	return entity.PlayerIDInSlice(id, list)
+}
+
+func (r *RoomRepository) PatchGameState(_ context.Context, roomID string, fn func(*entity.GameState) error) (entity.GameState, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room := r.ensureRoom(roomID)
+	if err := fn(&room.game); err != nil {
+		return entity.GameState{}, err
+	}
+	room.version++
+	gs := room.game
+	gs.PlayerCount = len(room.players)
+	return gs, nil
+}
+
+func (r *RoomRepository) ApplyVoteExtend(_ context.Context, roomID, playerID string, extraMs int64, livePeerCountWhenRoundEmpty int) (repository.VoteExtendResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room := r.ensureRoom(roomID)
+	g := &room.game
+	if g.Phase != entity.PhaseVoting {
+		return repository.VoteExtendResult{Silent: true}, nil
+	}
+	if g.VoteExtendUsed {
+		gs := *g
+		gs.PlayerCount = len(room.players)
+		return repository.VoteExtendResult{State: gs, MajorityApplied: false, Silent: false}, nil
+	}
+	for _, id := range g.VoteExtendRequestPlayerIDs {
+		if id == playerID {
+			return repository.VoteExtendResult{Silent: true}, nil
+		}
+	}
+	round := g.RoundPlayerIDs
+	if len(round) > 0 && !playerIDInSlice(playerID, round) {
+		return repository.VoteExtendResult{Silent: true}, nil
+	}
+
+	req := append([]string(nil), g.VoteExtendRequestPlayerIDs...)
+	req = append(req, playerID)
+	sort.Strings(req)
+	g.VoteExtendRequestPlayerIDs = req
+
+	n := len(round)
+	if n == 0 {
+		n = livePeerCountWhenRoundEmpty
+	}
+	required := voteExtendMajorityThreshold(n)
+	majorityApplied := false
+	if len(g.VoteExtendRequestPlayerIDs) >= required {
+		g.VoteExtendUsed = true
+		g.VoteEnd += extraMs
+		g.VoteExtendRequestPlayerIDs = nil
+		majorityApplied = true
+	}
+	room.version++
+	gs := *g
+	gs.PlayerCount = len(room.players)
+	return repository.VoteExtendResult{State: gs, MajorityApplied: majorityApplied, Silent: false}, nil
 }
 
 func snapshotFromRoom(roomID string, room *roomState) entity.RoomSnapshot {
