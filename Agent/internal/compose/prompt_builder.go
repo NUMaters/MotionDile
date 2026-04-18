@@ -42,7 +42,10 @@ const systemPrompt = `あなたはARゲーム「WaniAR」の監視AIエージェ
 func buildPromptInput(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary) llm.PromptInput {
 	selected := material.SelectMaterials(ev, hintPolicy)
 	directives := buildCandidateDirectives(selected, hintPolicy)
+	return buildPromptInputWith(ev, hintPolicy, summary, selected, directives)
+}
 
+func buildPromptInputWith(ev evidence.HintEvidence, hintPolicy policy.HintPolicy, summary ops.RecentHintSummary, selected material.SelectedMaterials, directives []candidateDirective) llm.PromptInput {
 	if ev.Enemy == nil {
 		return llm.PromptInput{
 			System: systemPrompt,

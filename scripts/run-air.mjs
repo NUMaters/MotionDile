@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+
+import { resolveAirBinary } from './resolve-air.mjs';
 
 const [, , targetDirArg] = process.argv;
 
@@ -11,58 +13,10 @@ if (!targetDirArg) {
 
 const serviceDir = resolve(process.cwd(), targetDirArg);
 const configPath = join(serviceDir, '.air.toml');
-const binaryName = process.platform === 'win32' ? 'air.exe' : 'air';
 
 if (!existsSync(configPath)) {
   console.error(`[air] config not found: ${configPath}`);
   process.exit(1);
-}
-
-function loadGoEnv() {
-  const result = spawnSync('go', ['env', '-json', 'GOBIN', 'GOPATH'], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(result.stdout);
-  } catch {
-    return {};
-  }
-}
-
-function resolveAirBinary() {
-  const airBinOverride = process.env.AIR_BIN;
-  if (airBinOverride && existsSync(airBinOverride)) {
-    return airBinOverride;
-  }
-
-  const goEnv = loadGoEnv();
-  const pathEntries = (process.env.PATH || '').split(delimiter).filter(Boolean);
-  const goBinEntries = [];
-
-  if (typeof goEnv.GOBIN === 'string' && goEnv.GOBIN.trim() !== '') {
-    goBinEntries.push(goEnv.GOBIN.trim());
-  }
-
-  if (typeof goEnv.GOPATH === 'string' && goEnv.GOPATH.trim() !== '') {
-    for (const goPathEntry of goEnv.GOPATH.split(delimiter)) {
-      if (goPathEntry.trim() !== '') {
-        goBinEntries.push(join(goPathEntry.trim(), 'bin'));
-      }
-    }
-  }
-
-  for (const candidateDir of [...pathEntries, ...goBinEntries]) {
-    const candidatePath = join(candidateDir, binaryName);
-    if (existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-
-  return null;
 }
 
 const airBinary = resolveAirBinary();

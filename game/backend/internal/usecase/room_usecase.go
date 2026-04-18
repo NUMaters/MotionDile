@@ -28,7 +28,7 @@ var ErrGameInProgress = errors.New("game in progress")
 var ErrRoomFull = errors.New("room is full")
 
 func isLobbyPhase(ph entity.GamePhase) bool {
-	return ph == "" || ph == entity.PhaseWaiting || ph == entity.PhaseCountdown
+	return entity.IsLobbyPhase(ph)
 }
 
 type JoinInput struct {
@@ -233,6 +233,21 @@ func (u *RoomUsecase) SetGameState(ctx context.Context, roomID string, gs entity
 	return u.repo.SetGameState(ctx, roomID, gs)
 }
 
+func (u *RoomUsecase) PatchGameState(ctx context.Context, roomID string, fn func(*entity.GameState) error) (entity.GameState, error) {
+	if strings.TrimSpace(roomID) == "" {
+		return entity.GameState{}, ErrInvalidInput
+	}
+	return u.repo.PatchGameState(ctx, roomID, fn)
+}
+
+// ApplyVoteExtend は vote_extend を原子的に 1 回で適用する。livePeerCountWhenRoundEmpty はメモリ実装で RoundPlayerIds が空のときに使う（Redis は presence を参照）。
+func (u *RoomUsecase) ApplyVoteExtend(ctx context.Context, roomID, playerID string, extraMs int64, livePeerCountWhenRoundEmpty int) (repository.VoteExtendResult, error) {
+	if strings.TrimSpace(roomID) == "" || strings.TrimSpace(playerID) == "" {
+		return repository.VoteExtendResult{}, ErrInvalidInput
+	}
+	return u.repo.ApplyVoteExtend(ctx, roomID, playerID, extraMs, livePeerCountWhenRoundEmpty)
+}
+
 func (u *RoomUsecase) PickEnemy(ctx context.Context, roomID string) (string, error) {
 	return u.repo.PickEnemy(ctx, roomID)
 }
@@ -243,6 +258,20 @@ func (u *RoomUsecase) CastVote(ctx context.Context, roomID, voterID, votedForID 
 
 func (u *RoomUsecase) GetPlayerIDs(ctx context.Context, roomID string) ([]string, error) {
 	return u.repo.GetPlayerIDs(ctx, roomID)
+}
+
+func (u *RoomUsecase) SetLandmarks(ctx context.Context, roomID string, landmarks []entity.Landmark) error {
+	if strings.TrimSpace(roomID) == "" {
+		return ErrInvalidInput
+	}
+	return u.repo.SetLandmarks(ctx, roomID, landmarks)
+}
+
+func (u *RoomUsecase) GetLandmarks(ctx context.Context, roomID string) ([]entity.Landmark, error) {
+	if strings.TrimSpace(roomID) == "" {
+		return nil, ErrInvalidInput
+	}
+	return u.repo.GetLandmarks(ctx, roomID)
 }
 
 type agentPlayerInfo struct {
@@ -258,12 +287,6 @@ type agentPlayerInfo struct {
 	IsEnemy       bool    `json:"isEnemy"`
 }
 
-type LandmarkInfo struct {
-	Type string  `json:"type"`
-	X    float64 `json:"x"`
-	Z    float64 `json:"z"`
-}
-
 type agentHintRequest struct {
 	RoomID       string            `json:"roomId"`
 	HintNumber   int               `json:"hintNumber"`
@@ -273,14 +296,14 @@ type agentHintRequest struct {
 	AllyTheme    string            `json:"allyTheme,omitempty"`
 	EnemyTheme   string            `json:"enemyTheme,omitempty"`
 	Players      []agentPlayerInfo `json:"players"`
-	Landmarks    []LandmarkInfo    `json:"landmarks,omitempty"`
+	Landmarks    []entity.Landmark `json:"landmarks,omitempty"`
 }
 
 type agentHintResponse struct {
 	Text string `json:"text"`
 }
 
-func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum int, landmarks []LandmarkInfo) (entity.HintInfo, error) {
+func (u *RoomUsecase) GenerateHint(ctx context.Context, roomID string, hintNum int, landmarks []entity.Landmark) (entity.HintInfo, error) {
 	snapshot, err := u.repo.GetSnapshot(ctx, roomID)
 	if err != nil {
 		return entity.HintInfo{}, err
@@ -466,7 +489,7 @@ func (u *RoomUsecase) TallyVotes(ctx context.Context, roomID string) (entity.Vot
 	maxVotes := 0
 	accused := ""
 	for pid, c := range counts {
-		if c > maxVotes {
+		if c > maxVotes || (c == maxVotes && pid < accused) {
 			maxVotes = c
 			accused = pid
 		}
