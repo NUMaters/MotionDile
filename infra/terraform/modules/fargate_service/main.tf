@@ -1,7 +1,7 @@
 locals {
   effective_task_subnets = length(var.task_subnet_ids) > 0 ? var.task_subnet_ids : var.public_subnet_ids
   alb_subnets           = var.internal ? local.effective_task_subnets : var.public_subnet_ids
-  has_https             = var.alb_ssl_certificate_arn != ""
+  has_https             = var.enable_https
 }
 
 resource "aws_cloudwatch_log_group" "this" {
@@ -90,6 +90,15 @@ resource "aws_lb" "this" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = local.alb_subnets
   idle_timeout       = var.alb_idle_timeout
+
+  dynamic "access_logs" {
+    for_each = var.enable_alb_access_logs ? [1] : []
+    content {
+      bucket  = var.alb_access_logs_bucket
+      prefix  = var.alb_access_logs_prefix != "" ? var.alb_access_logs_prefix : var.name_prefix
+      enabled = true
+    }
+  }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-alb" })
 }

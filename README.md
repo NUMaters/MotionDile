@@ -161,49 +161,78 @@ Hips
 ### アーキテクチャ
 
 ```
-                    ┌──────────────────────────────┐
-                    │     CloudFront (HTTPS)       │
-                    │  d7mgz9p4n1pcy.cloudfront.net│
-                    └──┬────────────────────┬──────┘
-                       │ /api/* /ws* /healthz│ 静的アセット
-                       ▼                    ▼
-              ┌─────────────┐     ┌──────────────┐
-              │  ALB (HTTP) │     │  S3 (OAC)    │
-              │  :80        │     │  frontend    │
-              └──┬──────────┘     └──────────────┘
-                 │
-       ┌─────────┴──────────┐
-       ▼                    ▼
-┌────────────┐    ┌────────────┐
-│ECS Fargate │    │ECS Fargate │
-│game-backend│───▶│  agent     │
-│:8090       │    │:8091       │
-│CPU 512     │    │CPU 256     │
-│MEM 1024    │    │MEM 512     │
-└────────────┘    └────────────┘
-                       │
-                       ▼
-               Amazon Bedrock
-              (Claude 3 Haiku)
+                         ┌─── WAF (AWS Managed Rules + Rate Limit) ───┐
+                         │                                            │
+                    ┌────▼─────────────────────────┐                  │
+            ┌──────▶│    CloudFront (HTTPS)        │                  │
+            │       │    + S3 (OAC, versioned)     │                  │
+            │       └──┬────────────────────┬──────┘                  │
+            │          │ /api/* /ws*        │ 静的アセット              │
+    Route53 │          ▼                    ▼                         │
+ motiondile.net   ┌─────────────┐    ┌──────────────┐                │
+     + ACM        │  ALB (HTTPS)│    │  S3 (OAC)    │                │
+                  │  + AccessLog│    │  frontend    │                │
+                  └──┬──────────┘    └──────────────┘                │
+                     │                                                │
+           ┌─────────┴──────────┐                                     │
+           ▼                    ▼                                     │
+    ┌────────────┐    ┌────────────────┐                              │
+    │ECS Fargate │    │ECS Fargate     │  Private Subnets             │
+    │game-backend│───▶│agent (internal)│  VPC Endpoints               │
+    │+ AutoScale │    │+ AutoScale     │  (ECR/Logs/SecretsManager/   │
+    └──────┬─────┘    └───────┬────────┘   Bedrock/S3)                │
+           │                  │                                       │
+           ▼                  ▼                                       │
+    ┌────────────┐    ┌────────────────┐    ┌──────────────────────┐  │
+    │ ElastiCache│    │Amazon Bedrock  │    │ CloudWatch           │  │
+    │ Redis (TLS)│    │(Claude Haiku)  │    │ Alarms + Dashboard   │──┘
+    │ + Backup   │    └────────────────┘    │ + Container Insights │
+    └────────────┘                          │ + SNS Email          │
+                                            └──────────────────────┘
 ```
 
 ### 使用技術
 
 | リソース | サービス | 用途 |
 |---|---|---|
-| ネットワーク | VPC + 2 Public Subnets + IGW | Fargate タスク・ALB の配置 |
-| コンテナ基盤 | ECS Fargate | game-backend / agent の実行 |
-| コンテナレジストリ | ECR | Docker イメージ管理 |
-| ロードバランサ | ALB | game-backend / agent への HTTP ルーティング |
-| 静的配信 | S3 + CloudFront | フロントエンド SPA + API/WS プロキシ |
-| AI | Amazon Bedrock (Claude 3 Haiku) | ゲーム内ヒント生成 |
-| ログ | CloudWatch Logs | ECS タスクのログ収集 |
+| ネットワーク | VPC + Public/Private Subnets + IGW + VPC Endpoints | Fargate タスク・ALB の配置、NAT 不要のプライベート通信 |
+| コンテナ基盤 | ECS Fargate (Container Insights 有効) | game-backend / agent の実行 |
+| コンテナレジストリ | ECR (IMMUTABLE タグ + ライフサイクルポリシー) | Docker イメージ管理、30 世代保持 |
+| ロードバランサ | ALB (Access Logs → S3, 90日保持) | game-backend / agent への HTTP/HTTPS ルーティング |
+| 静的配信 | S3 (バージョニング + 暗号化) + CloudFront | フロントエンド SPA + API/WS プロキシ |
+| AI | Amazon Bedrock (Claude Haiku) | ゲーム内ヒント生成 |
+| キャッシュ | ElastiCache Redis (保存時暗号化 + 自動バックアップ 7日) | ゲーム状態の共有・Pub/Sub |
+| DNS | Route 53 + ACM | 独自ドメイン・HTTPS 証明書自動管理 |
+| セキュリティ | WAF (Managed Rules + Rate Limit) | CloudFront への不正アクセス防御 |
+| 監視 | CloudWatch Alarms + Dashboard + SNS | ECS/ALB/Redis/CloudFront のメトリクス監視・アラート通知 |
+| ログ | CloudWatch Logs + ALB Access Logs | ECS タスクのログ収集・ALB リクエスト分析 |
 | IAM | タスク実行ロール / タスクロール | ECR pull, Bedrock InvokeModel |
+| Auto Scaling | Application Auto Scaling | CPU/Memory/リクエスト数ベースの自動スケーリング |
+| IaC 管理 | Terraform (S3 + DynamoDB backend) | リモート状態管理・排他ロック |
+
+### CI/CD (GitHub Actions)
+
+| ワークフロー | トリガー | 内容 |
+|---|---|---|
+| `deploy-backend.yml` | `main` push (game/backend/**, Agent/**) | ECR push → ECS task def 更新 → サービスデプロイ → 安定性待機 |
+| `deploy-frontend.yml` | `main` push (game/frontend/**) | npm build → S3 sync → CloudFront invalidation |
+| `terraform-plan.yml` | PR (infra/terraform/**) | terraform init → validate → plan → PR にコメント投稿 |
+
+GitHub Secrets に以下を設定:
+- `AWS_DEPLOY_ROLE_ARN`: OIDC 連携用の IAM ロール ARN
+- `VITE_GAME_API_BASE`: フロントエンドの API ベース URL
+- `FRONTEND_S3_BUCKET`: フロントエンド S3 バケット名
+- `CLOUDFRONT_DISTRIBUTION_ID`: CloudFront ディストリビューション ID
 
 ### デプロイ手順
 
 ```bash
-cd infra/terraform/environments/dev
+# ─── 0. 初回のみ: Terraform state バックエンド構築 ───
+cd infra/terraform/bootstrap
+terraform init && terraform apply
+# → 出力される backend_config を environments/dev/backend.tf に反映済み
+
+cd ../environments/dev
 
 # 1. terraform.tfvars を作成（terraform.tfvars.example を参考）
 cp terraform.tfvars.example terraform.tfvars
@@ -213,37 +242,42 @@ cp terraform.tfvars.example terraform.tfvars
 terraform init
 terraform apply -target=module.ecr_game -target=module.ecr_agent
 
-# 3. Docker イメージを ECR へ push
+# 3. Docker イメージを ECR へ push（git SHA タグ推奨）
 aws ecr get-login-password --region ap-northeast-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com
 cd ../../..
-docker build --platform linux/amd64 -t <ECR_URL>/waniar-game-backend:latest game/backend/
-docker push <ECR_URL>/waniar-game-backend:latest
-docker build --platform linux/amd64 -t <ECR_URL>/waniar-agent:latest Agent/
-docker push <ECR_URL>/waniar-agent:latest
+IMAGE_TAG=$(git rev-parse --short HEAD)
+docker build --platform linux/amd64 -t <ECR_URL>/waniar-game-backend:$IMAGE_TAG game/backend/
+docker push <ECR_URL>/waniar-game-backend:$IMAGE_TAG
+docker build --platform linux/amd64 -t <ECR_URL>/waniar-agent:$IMAGE_TAG Agent/
+docker push <ECR_URL>/waniar-agent:$IMAGE_TAG
 
 # 4. 全リソースをデプロイ
 cd infra/terraform/environments/dev
 terraform apply
 
-# 5. Agent ALB DNS を terraform output で取得し、terraform.tfvars の game_agent_url に設定して再 apply
-terraform apply
-
-# 6. フロントエンドを S3 にデプロイ
+# 5. フロントエンドを S3 にデプロイ
 cd ../../../..
 VITE_GAME_CLOUDFRONT_PROXY=true npm run build
 aws s3 sync dist/ s3://$(cd infra/terraform/environments/dev && terraform output -raw frontend_s3_bucket_id)/ --delete
 aws cloudfront create-invalidation --distribution-id $(cd infra/terraform/environments/dev && terraform output -raw frontend_cloudfront_distribution_id) --paths "/*"
 ```
 
+> **CI/CD が設定済みの場合**: `main` ブランチへの push で自動デプロイされます（GitHub Actions）。
+
 ### Terraform Outputs
 
 | Output | 説明 |
 |---|---|
 | `frontend_cloudfront_url` | フロントエンド URL (https://xxx.cloudfront.net) |
+| `custom_domain_url` | 独自ドメイン URL (https://motiondile.net) |
 | `game_backend_alb_dns` | Game Backend ALB DNS |
-| `agent_alb_dns` | Agent ALB DNS |
+| `agent_alb_dns` | Agent ALB DNS（内部専用） |
 | `frontend_s3_bucket_id` | フロント用 S3 バケット名 |
 | `frontend_cloudfront_distribution_id` | キャッシュ無効化用 CloudFront ID |
+| `name_servers` | お名前.com に設定する NS レコード |
+| `redis_addr` | ElastiCache Redis エンドポイント |
+| `cloudwatch_dashboard_url` | CloudWatch ダッシュボード URL |
+| `waf_web_acl_arn` | WAF Web ACL ARN |
 
 ## セットアップ
 

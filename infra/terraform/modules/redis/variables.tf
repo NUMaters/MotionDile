@@ -32,6 +32,18 @@ variable "num_cache_nodes" {
   default = 1
 }
 
+variable "transit_encryption_enabled" {
+  type        = bool
+  default     = false
+  description = "転送中暗号化 (TLS)。有効にするとアプリ側も TLS 接続が必要"
+}
+
+variable "snapshot_retention_days" {
+  type        = number
+  default     = 7
+  description = "自動バックアップ保持日数（0 で無効）"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

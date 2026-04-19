@@ -117,6 +117,12 @@ variable "alb_ssl_certificate_arn" {
   description = "ALB に HTTPS listener を追加する場合の ACM 証明書 ARN"
 }
 
+variable "enable_https" {
+  type        = bool
+  default     = false
+  description = "ALB HTTPS リスナーを有効にする（alb_ssl_certificate_arn と併せて設定）"
+}
+
 variable "extra_task_security_group_ids" {
   type        = list(string)
   default     = []
@@ -170,4 +176,24 @@ variable "autoscaling_requests_per_target" {
   type        = number
   default     = 0
   description = "ALB RequestCountPerTarget ターゲット（0 = 無効）"
+}
+
+# ============ ALB Access Logs ============
+
+variable "enable_alb_access_logs" {
+  type        = bool
+  default     = false
+  description = "ALB アクセスログを S3 に保存する"
+}
+
+variable "alb_access_logs_bucket" {
+  type        = string
+  default     = ""
+  description = "ALB アクセスログ保存先の S3 バケット名"
+}
+
+variable "alb_access_logs_prefix" {
+  type        = string
+  default     = ""
+  description = "ALB アクセスログの S3 プレフィックス"
 }
