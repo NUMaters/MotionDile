@@ -1,0 +1,42 @@
+# コピーして terraform.tfvars として編集: cp terraform.tfvars.example terraform.tfvars
+
+aws_region   = "ap-northeast-1"
+project_name = "waniar"
+
+# ⚠ ECR は IMMUTABLE タグ設定です。:latest は使えません。
+game_backend_image = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/waniar-game-backend:v0.1.0"
+agent_image        = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/waniar-agent:v0.1.0"
+
+# Agent: Bedrock 専用（Claude 3 Haiku）。AWS コンソールでモデルアクセスを有効化すること
+# agent_bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+
+# Redis（水平スケール対応）。単一タスク運用なら false
+enable_redis   = true
+redis_node_type = "cache.t3.micro"
+
+# フロント静的配信（S3 + CloudFront）
+enable_static_frontend = true
+
+# 独自ドメイン（お名前.com）運用
+# 1. ACM で証明書を発行（CloudFront 用は us-east-1、ALB 用は ap-northeast-1）
+# 2. お名前.com で CNAME を設定：
+#    game.motiondile.net -> <CloudFront ドメイン>.cloudfront.net
+#    origin-game.motiondile.net -> <ALB DNS 名>
+# 3. ACM DNS 検証レコードもお名前.com に登録
+
+# CloudFront 用 ACM (us-east-1)
+# frontend_acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx"
+# frontend_domain_aliases      = ["game.motiondile.net"]
+
+# game ALB 用 ACM (ap-northeast-1)
+# alb_acm_certificate_arn = "arn:aws:acm:ap-northeast-1:123456789012:certificate/yyyyyyyy"
+
+# WAF Web ACL（CloudFront 用、us-east-1 で作成）
+# waf_acl_arn = "arn:aws:wafv2:us-east-1:123456789012:global/webacl/waniar-waf/zzzzzzzz"
+
+# AGENT_URL は Agent Internal ALB から自動設定されます。手動上書きする場合:
+# game_agent_url = "http://waniar-agent-xxxxx.ap-northeast-1.elb.amazonaws.com"
+
+tags = {
+  Environment = "dev"
+}

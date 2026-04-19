@@ -5,11 +5,12 @@
  * Vite は pipe だとログが長時間バッファされるため stdio を inherit にする（プレフィックスなし）。
  * いずれか 1 つが終了したら他を SIGTERM（concurrently -k に相当）。
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve, delimiter } from 'node:path';
-import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+
+import { resolveAirBinary } from './resolve-air.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -66,23 +67,6 @@ function spawnDev({ name, cmd, args, cwd: childCwd }) {
   });
   child.on('exit', onOneExited);
   children.push(child);
-}
-
-// ─── air バイナリの探索（run-air.mjs と同じロジック） ───
-function resolveAirBinary() {
-  const binaryName = process.platform === 'win32' ? 'air.exe' : 'air';
-  if (process.env.AIR_BIN && existsSync(process.env.AIR_BIN)) return process.env.AIR_BIN;
-  const goEnvResult = spawnSync('go', ['env', '-json', 'GOBIN', 'GOPATH'], { encoding: 'utf8' });
-  let goEnv = {};
-  try { goEnv = JSON.parse(goEnvResult.stdout); } catch { /* ignore */ }
-  const dirs = (process.env.PATH || '').split(delimiter).filter(Boolean);
-  if (goEnv.GOBIN) dirs.push(goEnv.GOBIN);
-  if (goEnv.GOPATH) for (const p of goEnv.GOPATH.split(delimiter)) { if (p) dirs.push(join(p, 'bin')); }
-  for (const d of dirs) {
-    const c = join(d, binaryName);
-    if (existsSync(c)) return c;
-  }
-  return null;
 }
 
 const airBin = resolveAirBinary();

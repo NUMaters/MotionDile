@@ -9,11 +9,17 @@ const appBaseUrl = new URL(import.meta.env.BASE_URL || '/', window.location.orig
 export const MODEL_URL = new URL('modeling/Wani_game.glb', appBaseUrl).href;
 
 // ─── バックエンド API / WebSocket（Vite プロキシと対応） ─────────────────────
-/** ゲーム同期 REST のベースパス（例: `/game-api/v1` → 8090 へプロキシ） */
-export const GAME_API_BASE = import.meta.env.VITE_GAME_API_BASE || '/game-api/v1';
-/** ゲーム同期 WebSocket の URL（例: `/game-ws` → `ws://.../ws` へプロキシ） */
+/** CloudFront が /api・/ws を game-backend ALB にプロキシする本番向けビルド（`npm run build:aws`） */
+const cloudfrontProxy = import.meta.env.VITE_GAME_CLOUDFRONT_PROXY === 'true';
+
+/** ゲーム同期 REST のベースパス（例: `/game-api/v1` → 8090 へプロキシ、本番プロキシ時は `/api/v1`） */
+export const GAME_API_BASE = import.meta.env.VITE_GAME_API_BASE
+  || (cloudfrontProxy ? '/api/v1' : '/game-api/v1');
+/** ゲーム同期 WebSocket（本番プロキシ時は同一ホストの `/ws`） */
 export const GAME_WS_BASE = import.meta.env.VITE_GAME_WS_BASE
-  || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/game-ws`;
+  || (cloudfrontProxy
+    ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+    : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/game-ws`);
 
 // ─── ルーム / セッション ───────────────────────────────────────────────────
 /** URL クエリ `?room=`（任意・共有用）。未指定時は空で、参加時に API が待機中の部屋を検索または新規作成 */

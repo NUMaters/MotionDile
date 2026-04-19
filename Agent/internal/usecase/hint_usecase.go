@@ -26,7 +26,7 @@ func NewHintUsecase(llmComposer, templateComposer compose.Composer, historyStore
 	}
 }
 
-// Generate は HintRequest を受け取り、OpenAI でヒントを生成して返す。
+// Generate は HintRequest を受け取り、LLM でヒントを生成して返す。
 // API 障害時はフォールバックで静的ヒントを返す。
 func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (domain.HintResponse, error) {
 	hintEvidence := evidence.BuildHintEvidence(req)
@@ -40,7 +40,7 @@ func (u *HintUsecase) Generate(ctx context.Context, req domain.HintRequest) (dom
 
 	text, err := u.llmComposer.Compose(ctx, hintEvidence, hintPolicy, summary)
 	if err != nil {
-		log.Printf("[agent] OpenAI error, falling back: %v", err)
+		log.Printf("[agent] LLM error, falling back: %v", err)
 		return domain.HintResponse{Text: u.composeTemplate(ctx, hintEvidence, hintPolicy, summary)}, nil
 	}
 

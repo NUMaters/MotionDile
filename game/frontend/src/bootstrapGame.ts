@@ -459,11 +459,19 @@ function trySpawnLocalPlayerAfterJoin(): void {
   const step = (): void => {
     frames++;
     if (!isMultiplayerSessionActive()) {
-      if (frames < 120) requestAnimationFrame(step);
+      if (frames < 120) {
+        requestAnimationFrame(step);
+      } else {
+        console.warn('[spawn] session not active after timeout — giving up');
+      }
       return;
     }
     if (!model || !hasWorldColliders()) {
-      if (frames < 480) requestAnimationFrame(step);
+      if (frames < 480) {
+        requestAnimationFrame(step);
+      } else {
+        console.warn('[spawn] model or colliders not ready after timeout — giving up');
+      }
       return;
     }
     let netMe = getLastJoinMyPlayer();

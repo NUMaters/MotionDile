@@ -1,20 +1,25 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 
 	"agent/internal/contract"
 	"agent/internal/domain"
-	"agent/internal/usecase"
 )
 
-type HintHandler struct {
-	uc *usecase.HintUsecase
+// HintGenerator abstracts the hint generation usecase for testability.
+type HintGenerator interface {
+	Generate(ctx context.Context, req domain.HintRequest) (domain.HintResponse, error)
 }
 
-func NewHintHandler(uc *usecase.HintUsecase) *HintHandler {
+type HintHandler struct {
+	uc HintGenerator
+}
+
+func NewHintHandler(uc HintGenerator) *HintHandler {
 	return &HintHandler{uc: uc}
 }
 

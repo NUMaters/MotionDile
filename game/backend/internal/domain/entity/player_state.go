@@ -37,3 +37,31 @@ type RoomSnapshot struct {
 	Version int64         `json:"version"`
 	Players []PlayerState `json:"players"`
 }
+
+// PickUnusedColor returns the first PlayerColors entry not yet used by existing players.
+func PickUnusedColor(usedColors map[string]bool, playerCount int) string {
+	for _, c := range PlayerColors {
+		if !usedColors[c] {
+			return c
+		}
+	}
+	return PlayerColors[playerCount%len(PlayerColors)]
+}
+
+// VoteExtendMajorityThreshold returns the minimum votes required (⌊n/2⌋+1).
+func VoteExtendMajorityThreshold(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	return n/2 + 1
+}
+
+// PlayerIDInSlice checks whether id is in list.
+func PlayerIDInSlice(id string, list []string) bool {
+	for _, x := range list {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
