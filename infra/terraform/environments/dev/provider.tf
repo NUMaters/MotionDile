@@ -12,3 +12,9 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
+
+# CloudFront 用 ACM は us-east-1 で発行する必要がある
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+}

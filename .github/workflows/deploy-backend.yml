@@ -1,0 +1,129 @@
+name: Deploy Backend Services
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "game/backend/**"
+      - "Agent/**"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to deploy"
+        required: true
+        type: choice
+        options:
+          - all
+          - game-backend
+          - agent
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_GAME: waniar-game-backend
+  ECR_AGENT: waniar-agent
+  ECS_CLUSTER: waniar-cluster
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      game: ${{ steps.changes.outputs.game }}
+      agent: ${{ steps.changes.outputs.agent }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            game:
+              - 'game/backend/**'
+            agent:
+              - 'Agent/**'
+
+  build-game-backend:
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.game == 'true' ||
+      github.event.inputs.service == 'all' ||
+      github.event.inputs.service == 'game-backend'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build, tag, push
+        working-directory: game/backend
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$ECR_GAME:$IMAGE_TAG -t $REGISTRY/$ECR_GAME:latest .
+          docker push $REGISTRY/$ECR_GAME --all-tags
+
+      - name: Deploy to ECS
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition waniar-game --query 'taskDefinition')
+          NEW_DEF=$(echo $TASK_DEF | jq --arg IMAGE "$REGISTRY/$ECR_GAME:$IMAGE_TAG" \
+            '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service waniar-game --task-definition $NEW_ARN --force-new-deployment
+
+      - name: Wait for deployment stability
+        run: |
+          aws ecs wait services-stable --cluster $ECS_CLUSTER --services waniar-game --region $AWS_REGION
+
+  build-agent:
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.agent == 'true' ||
+      github.event.inputs.service == 'all' ||
+      github.event.inputs.service == 'agent'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build, tag, push
+        working-directory: Agent
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$ECR_AGENT:$IMAGE_TAG -t $REGISTRY/$ECR_AGENT:latest .
+          docker push $REGISTRY/$ECR_AGENT --all-tags
+
+      - name: Deploy to ECS
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition waniar-agent --query 'taskDefinition')
+          NEW_DEF=$(echo $TASK_DEF | jq --arg IMAGE "$REGISTRY/$ECR_AGENT:$IMAGE_TAG" \
+            '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service waniar-agent --task-definition $NEW_ARN --force-new-deployment
+
+      - name: Wait for deployment stability
+        run: |
+          aws ecs wait services-stable --cluster $ECS_CLUSTER --services waniar-agent --region $AWS_REGION

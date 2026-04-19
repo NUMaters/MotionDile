@@ -1,8 +1,16 @@
+locals {
+  effective_task_subnets = length(var.task_subnet_ids) > 0 ? var.task_subnet_ids : var.public_subnet_ids
+  alb_subnets           = var.internal ? local.effective_task_subnets : var.public_subnet_ids
+  has_https             = var.enable_https
+}
+
 resource "aws_cloudwatch_log_group" "this" {
   name              = "/ecs/${var.name_prefix}"
   retention_in_days = var.log_retention_days
   tags              = var.tags
 }
+
+# ==================== Security Groups ====================
 
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb-sg"
@@ -15,6 +23,29 @@ resource "aws_security_group" "alb" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  dynamic "ingress" {
+    for_each = local.has_https ? [1] : []
+    content {
+      description = "HTTPS"
+      from_port   = 443
+      to_port     = 443
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.extra_alb_ingress_rules
+    content {
+      description     = ingress.value.description
+      from_port       = ingress.value.from_port
+      to_port         = ingress.value.to_port
+      protocol        = ingress.value.protocol
+      cidr_blocks     = ingress.value.cidr_blocks
+      security_groups = ingress.value.security_groups
+    }
   }
 
   egress {
@@ -50,12 +81,24 @@ resource "aws_security_group" "task" {
   tags = merge(var.tags, { Name = "${var.name_prefix}-task-sg" })
 }
 
+# ==================== ALB ====================
+
 resource "aws_lb" "this" {
   name               = substr(replace(var.name_prefix, "_", "-"), 0, 32)
   load_balancer_type = "application"
-  internal           = false
+  internal           = var.internal
   security_groups    = [aws_security_group.alb.id]
-  subnets            = var.public_subnet_ids
+  subnets            = local.alb_subnets
+  idle_timeout       = var.alb_idle_timeout
+
+  dynamic "access_logs" {
+    for_each = var.enable_alb_access_logs ? [1] : []
+    content {
+      bucket  = var.alb_access_logs_bucket
+      prefix  = var.alb_access_logs_prefix != "" ? var.alb_access_logs_prefix : var.name_prefix
+      enabled = true
+    }
+  }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-alb" })
 }
@@ -88,6 +131,22 @@ resource "aws_lb_listener" "http" {
     target_group_arn = aws_lb_target_group.this.arn
   }
 }
+
+resource "aws_lb_listener" "https" {
+  count             = local.has_https ? 1 : 0
+  load_balancer_arn = aws_lb.this.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.alb_ssl_certificate_arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.this.arn
+  }
+}
+
+# ==================== IAM ====================
 
 data "aws_iam_policy_document" "task_assume" {
   statement {
@@ -150,6 +209,8 @@ resource "aws_iam_role_policy" "task_bedrock_invoke" {
   })
 }
 
+# ==================== ECS Task Definition ====================
+
 resource "aws_ecs_task_definition" "this" {
   family                   = var.name_prefix
   network_mode             = "awsvpc"
@@ -190,6 +251,8 @@ resource "aws_ecs_task_definition" "this" {
   tags = var.tags
 }
 
+# ==================== ECS Service ====================
+
 resource "aws_ecs_service" "this" {
   name                              = var.name_prefix
   cluster                           = var.cluster_arn
@@ -205,9 +268,9 @@ resource "aws_ecs_service" "this" {
   }
 
   network_configuration {
-    subnets          = var.public_subnet_ids
-    security_groups  = [aws_security_group.task.id]
-    assign_public_ip = true
+    subnets          = local.effective_task_subnets
+    security_groups  = concat([aws_security_group.task.id], var.extra_task_security_group_ids)
+    assign_public_ip = var.assign_public_ip
   }
 
   load_balancer {
@@ -219,4 +282,70 @@ resource "aws_ecs_service" "this" {
   depends_on = [aws_lb_listener.http]
 
   tags = var.tags
+}
+
+# ==================== Auto Scaling ====================
+
+resource "aws_appautoscaling_target" "ecs" {
+  count              = var.enable_autoscaling ? 1 : 0
+  max_capacity       = var.autoscaling_max_capacity
+  min_capacity       = var.autoscaling_min_capacity
+  resource_id        = "service/${split("/", var.cluster_arn)[1]}/${aws_ecs_service.this.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "cpu" {
+  count              = var.enable_autoscaling ? 1 : 0
+  name               = "${var.name_prefix}-cpu-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.autoscaling_cpu_target
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    scale_in_cooldown  = 120
+    scale_out_cooldown = 60
+  }
+}
+
+resource "aws_appautoscaling_policy" "memory" {
+  count              = var.enable_autoscaling ? 1 : 0
+  name               = "${var.name_prefix}-memory-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.autoscaling_memory_target
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+    scale_in_cooldown  = 120
+    scale_out_cooldown = 60
+  }
+}
+
+resource "aws_appautoscaling_policy" "alb_requests" {
+  count              = var.enable_autoscaling && var.autoscaling_requests_per_target > 0 ? 1 : 0
+  name               = "${var.name_prefix}-request-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs[0].service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.autoscaling_requests_per_target
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label         = "${aws_lb.this.arn_suffix}/${aws_lb_target_group.this.arn_suffix}"
+    }
+    scale_in_cooldown  = 120
+    scale_out_cooldown = 30
+  }
 }

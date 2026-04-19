@@ -33,5 +33,17 @@ variable "domain_aliases" {
 variable "game_backend_alb_dns" {
   type        = string
   default     = ""
-  description = "game-backend ALB の DNS 名（例: xxx.elb.amazonaws.com）。空でなければ CloudFront が /api /ws /healthz を ALB にプロキシ（HTTPS ページからの混合コンテンツ回避）"
+  description = "game-backend ALB の DNS 名（例: xxx.elb.amazonaws.com）。空でなければ CloudFront が /api /ws /healthz を ALB にプロキシ"
+}
+
+variable "alb_origin_protocol_policy" {
+  type        = string
+  default     = "http-only"
+  description = "ALB オリジンのプロトコルポリシー（https-only 推奨）"
+}
+
+variable "waf_acl_arn" {
+  type        = string
+  default     = ""
+  description = "WAF Web ACL ARN。空なら WAF なし"
 }

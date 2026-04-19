@@ -9,7 +9,6 @@ import (
 const DefaultBedrockModel = "anthropic.claude-3-haiku-20240307-v1:0"
 
 type Config struct {
-	OpenAIKey      string
 	Port           string
 	AWSRegion      string
 	BedrockModelID string
@@ -18,7 +17,6 @@ type Config struct {
 func Load() Config {
 	loadDotEnv()
 	c := Config{
-		OpenAIKey:      os.Getenv("OPENAI_API_KEY"),
 		Port:           os.Getenv("AGENT_PORT"),
 		AWSRegion:      os.Getenv("AWS_REGION"),
 		BedrockModelID: strings.TrimSpace(os.Getenv("BEDROCK_MODEL_ID")),
