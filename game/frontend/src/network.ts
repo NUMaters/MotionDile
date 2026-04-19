@@ -156,6 +156,13 @@ let multiplayerSessionActive = false;
 let lastMoveSentAt = 0;
 const remotePlayers = new Map<string, RemotePlayer>();
 
+/** ページ非表示時に待機フェーズから自動離脱するタイマー */
+let visibilityLeaveTimer: number | null = null;
+const VISIBILITY_LEAVE_DELAY_MS = 15_000;
+
+/** 現在のゲームフェーズ（game_state メッセージから同期） */
+let currentGamePhase: string = 'waiting';
+
 let remoteModelTemplate: THREE.Group | null = null;
 let remoteAnimationClips: THREE.AnimationClip[] = [];
 
@@ -654,6 +661,7 @@ function phaseFromPayload(raw: unknown): string {
 function handleGameState(payload: Record<string, unknown>): void {
   applyServerGameRules(payload.rules as Partial<GameRulesState> | undefined);
   const phase = phaseFromPayload(payload.phase);
+  currentGamePhase = phase;
   const playerCount = (payload.playerCount as number) || 0;
   const countdownEnd = (payload.countdownEnd as number) || 0;
   const players = (payload.players as { displayName: string; color: string; playerId?: string }[]) || [];
@@ -728,6 +736,7 @@ function handleGameState(payload: Record<string, unknown>): void {
 }
 
 function handleGameStart(payload: Record<string, unknown>): void {
+  currentGamePhase = 'playing';
   const fallbackMs = getGameRules().gameDurationSec * 1000;
   const gameEnd = (payload.gameEnd as number) || Date.now() + fallbackMs;
   const role = (payload.role as string) || 'citizen';
@@ -742,6 +751,7 @@ function handleHint(payload: Record<string, unknown>): void {
 }
 
 function handleVoteStart(payload: Record<string, unknown>): void {
+  currentGamePhase = 'voting';
   const voteEnd = (payload.voteEnd as number) || Date.now() + getGameRules().voteDurationSec * 1000;
   const players = (payload.players as { playerId: string; color: string; displayName?: string }[]) || [];
   for (const pl of players) {
@@ -876,6 +886,11 @@ export function cleanup(options?: {
   lastJoinPeerXZ = [];
   lastJoinMyPlayer = null;
   multiplayerSessionActive = false;
+  currentGamePhase = 'waiting';
+  if (visibilityLeaveTimer != null) {
+    window.clearTimeout(visibilityLeaveTimer);
+    visibilityLeaveTimer = null;
+  }
   if (wsReconnectTimer != null) window.clearTimeout(wsReconnectTimer);
   wsReconnectTimer = null;
   if (wsHeartbeatTimer != null) {
@@ -900,3 +915,31 @@ export function cleanup(options?: {
   stripRoomQueryFromUrl();
   setMultiplayerStatus('未参加（次回「ゲーム参加」で部屋を検索します）');
 }
+
+// ─── Page Visibility: 待機フェーズでタブ放置時に自動離脱 ───
+document.addEventListener('visibilitychange', () => {
+  if (!multiplayerSessionActive) return;
+
+  if (document.hidden) {
+    // 待機中・カウントダウン中のみ、一定時間後に自動離脱
+    if (currentGamePhase === 'waiting' || currentGamePhase === 'countdown') {
+      if (visibilityLeaveTimer == null) {
+        visibilityLeaveTimer = window.setTimeout(() => {
+          visibilityLeaveTimer = null;
+          if (!multiplayerSessionActive) return;
+          // まだ待機/カウントダウン中なら離脱
+          if (currentGamePhase === 'waiting' || currentGamePhase === 'countdown') {
+            cleanup({ excludePreviousRoomFromAutoResolve: false });
+            showScreen('home');
+          }
+        }, VISIBILITY_LEAVE_DELAY_MS);
+      }
+    }
+  } else {
+    // タブが再表示されたらタイマーをキャンセル
+    if (visibilityLeaveTimer != null) {
+      window.clearTimeout(visibilityLeaveTimer);
+      visibilityLeaveTimer = null;
+    }
+  }
+});

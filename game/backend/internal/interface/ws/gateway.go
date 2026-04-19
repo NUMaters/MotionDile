@@ -30,6 +30,11 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 2048
+
+	// waitingフェーズでheartbeat/moveが来ない場合にキックするまでの時間
+	idleKickTimeout = 30 * time.Second
+	// アイドルチェックの実行間隔
+	idleCheckInterval = 10 * time.Second
 )
 
 type gatewayMessage struct {
@@ -76,11 +81,12 @@ type genericEnvelope struct {
 }
 
 type Client struct {
-	conn      *websocket.Conn
-	send      chan []byte
-	roomID    string
-	playerID  string
-	closeOnce sync.Once
+	conn         *websocket.Conn
+	send         chan []byte
+	roomID       string
+	playerID     string
+	closeOnce    sync.Once
+	lastActivity int64 // UnixMilli of last meaningful client activity (heartbeat/move)
 }
 
 type roomGameCtx struct {
@@ -107,19 +113,77 @@ type Gateway struct {
 	bus      RoomPublisher
 	presence repository.RoomPresence
 	deadline *scheduler.DeadlineRunner
+
+	stopIdleChecker chan struct{}
 }
 
 func NewGateway(uc *usecase.RoomUsecase, rules config.Rules) *Gateway {
-	return &Gateway{
+	g := &Gateway{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin:     buildCheckOrigin(),
 		},
-		usecase:  uc,
-		rules:    rules,
-		rooms:    make(map[string]map[*Client]struct{}),
-		gameCtxs: make(map[string]*roomGameCtx),
+		usecase:         uc,
+		rules:           rules,
+		rooms:           make(map[string]map[*Client]struct{}),
+		gameCtxs:        make(map[string]*roomGameCtx),
+		stopIdleChecker: make(chan struct{}),
+	}
+	go g.runIdleChecker()
+	return g
+}
+
+// StopIdleChecker はサーバ終了時にアイドルチェッカーgoroutineを停止する。
+func (g *Gateway) StopIdleChecker() {
+	select {
+	case <-g.stopIdleChecker:
+	default:
+		close(g.stopIdleChecker)
+	}
+}
+
+// runIdleChecker は待機フェーズのルームを定期的にスキャンし、
+// 一定時間アクティビティのないクライアントを切断する。
+func (g *Gateway) runIdleChecker() {
+	ticker := time.NewTicker(idleCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-g.stopIdleChecker:
+			return
+		case <-ticker.C:
+			g.kickIdleWaitingClients()
+		}
+	}
+}
+
+func (g *Gateway) kickIdleWaitingClients() {
+	now := time.Now().UnixMilli()
+	threshold := now - idleKickTimeout.Milliseconds()
+
+	g.mu.RLock()
+	var toKick []*Client
+	for roomID, clients := range g.rooms {
+		gs, err := g.usecase.GetGameState(context.Background(), roomID)
+		if err != nil {
+			continue
+		}
+		if gs.Phase != entity.PhaseWaiting && gs.Phase != "" {
+			continue
+		}
+		for c := range clients {
+			lastAct := c.lastActivity
+			if lastAct > 0 && lastAct < threshold {
+				toKick = append(toKick, c)
+			}
+		}
+	}
+	g.mu.RUnlock()
+
+	for _, c := range toKick {
+		log.Printf("[ws] kicking idle player %s from room %s (waiting phase)", c.playerID, c.roomID)
+		_ = c.conn.Close()
 	}
 }
 
@@ -273,10 +337,11 @@ func (g *Gateway) Handle(c *gin.Context) {
 	}
 
 	client := &Client{
-		conn:     conn,
-		send:     make(chan []byte, 32),
-		roomID:   roomID,
-		playerID: playerID,
+		conn:         conn,
+		send:         make(chan []byte, 32),
+		roomID:       roomID,
+		playerID:     playerID,
+		lastActivity: time.Now().UnixMilli(),
 	}
 	g.register(client)
 	if g.presence != nil {
@@ -339,6 +404,7 @@ func (g *Gateway) readPump(client *Client) {
 		case "vote_extend":
 			g.handleVoteExtend(client)
 		case "heartbeat":
+			client.lastActivity = time.Now().UnixMilli()
 			if g.presence != nil {
 				_ = g.presence.Touch(context.Background(), client.roomID, client.playerID)
 			}
@@ -349,6 +415,7 @@ func (g *Gateway) readPump(client *Client) {
 }
 
 func (g *Gateway) handleMove(client *Client, raw json.RawMessage) {
+	client.lastActivity = time.Now().UnixMilli()
 	var mv movePayload
 	if err := json.Unmarshal(raw, &mv); err != nil {
 		return
