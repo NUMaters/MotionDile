@@ -10,6 +10,22 @@ resource "aws_s3_bucket" "site" {
   tags   = var.tags
 }
 
+resource "aws_s3_bucket_versioning" "site" {
+  bucket = aws_s3_bucket.site.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "site" {
+  bucket = aws_s3_bucket.site.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "site" {
   bucket = aws_s3_bucket.site.id
 

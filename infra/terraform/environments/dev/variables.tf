@@ -76,7 +76,19 @@ variable "alb_acm_certificate_arn" {
 variable "waf_acl_arn" {
   type        = string
   default     = ""
-  description = "CloudFront に関連付ける WAF Web ACL ARN"
+  description = "外部で作成済みの WAF Web ACL ARN。空なら自動作成"
+}
+
+variable "enable_waf" {
+  type        = bool
+  default     = true
+  description = "CloudFront 用 WAF を自動作成する"
+}
+
+variable "waf_rate_limit" {
+  type        = number
+  default     = 2000
+  description = "WAF IP レートリミット（5分あたりリクエスト数）"
 }
 
 variable "enable_redis" {
@@ -93,4 +105,32 @@ variable "redis_node_type" {
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+# ─── Auto Scaling ───
+
+variable "game_autoscaling_min" {
+  type    = number
+  default = 2
+}
+
+variable "game_autoscaling_max" {
+  type    = number
+  default = 20
+}
+
+variable "agent_autoscaling_min" {
+  type    = number
+  default = 1
+}
+
+variable "agent_autoscaling_max" {
+  type    = number
+  default = 5
+}
+
+variable "alarm_email" {
+  type        = string
+  default     = ""
+  description = "アラーム通知先メールアドレス。空なら通知サブスクリプションなし"
 }

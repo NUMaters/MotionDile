@@ -55,3 +55,13 @@ output "custom_domain_url" {
   value       = var.domain_name != "" ? "https://${var.domain_name}" : null
   description = "独自ドメイン URL"
 }
+
+output "cloudwatch_dashboard_url" {
+  value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${module.monitoring.dashboard_name}"
+  description = "CloudWatch ダッシュボード URL"
+}
+
+output "waf_web_acl_arn" {
+  value       = var.enable_waf ? module.waf[0].web_acl_arn : ""
+  description = "WAF Web ACL ARN"
+}

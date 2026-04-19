@@ -75,7 +75,73 @@ module "ecr_agent" {
 
 resource "aws_ecs_cluster" "main" {
   name = "${var.project_name}-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
   tags = local.default_tags
+}
+
+# ==================== ALB Access Logs S3 Bucket ====================
+
+data "aws_caller_identity" "current" {}
+
+data "aws_elb_service_account" "main" {}
+
+resource "aws_s3_bucket" "alb_logs" {
+  bucket = "${var.project_name}-alb-logs-${data.aws_caller_identity.current.account_id}"
+  tags   = local.default_tags
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  rule {
+    id     = "expire-old-logs"
+    status = "Enabled"
+    filter {}
+    expiration {
+      days = 90
+    }
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_policy" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = data.aws_elb_service_account.main.arn
+        }
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.alb_logs.arn}/*"
+      }
+    ]
+  })
 }
 
 # ==================== Redis (ElastiCache) ====================
@@ -130,9 +196,14 @@ module "agent" {
 
   # Auto Scaling: Agent
   enable_autoscaling         = true
-  autoscaling_min_capacity   = 1
-  autoscaling_max_capacity   = 5
+  autoscaling_min_capacity   = var.agent_autoscaling_min
+  autoscaling_max_capacity   = var.agent_autoscaling_max
   autoscaling_cpu_target     = 60
+
+  # ALB Access Logs
+  enable_alb_access_logs = true
+  alb_access_logs_bucket = aws_s3_bucket.alb_logs.id
+  alb_access_logs_prefix = "agent"
 
   tags = local.default_tags
 }
@@ -159,8 +230,9 @@ module "game_backend" {
   # Private subnet + public-facing ALB + no public IP on tasks
   assign_public_ip       = false
   internal               = false
-  alb_idle_timeout       = 120 # WebSocket 向け
+  alb_idle_timeout        = 120
   alb_ssl_certificate_arn = local.effective_alb_acm_arn
+  enable_https            = var.domain_name != ""
 
   desired_count = var.enable_redis ? 2 : 1
 
@@ -184,13 +256,33 @@ module "game_backend" {
 
   # Auto Scaling: Game Backend
   enable_autoscaling              = true
-  autoscaling_min_capacity        = var.enable_redis ? 2 : 1
-  autoscaling_max_capacity        = 20
+  autoscaling_min_capacity        = var.enable_redis ? var.game_autoscaling_min : 1
+  autoscaling_max_capacity        = var.game_autoscaling_max
   autoscaling_cpu_target          = 60
   autoscaling_memory_target       = 70
   autoscaling_requests_per_target = 1000
 
+  # ALB Access Logs
+  enable_alb_access_logs = true
+  alb_access_logs_bucket = aws_s3_bucket.alb_logs.id
+  alb_access_logs_prefix = "game"
+
   tags = local.default_tags
+}
+
+# ==================== WAF ====================
+
+module "waf" {
+  count  = var.enable_waf ? 1 : 0
+  source = "../../modules/waf"
+
+  providers = {
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  name_prefix = var.project_name
+  rate_limit  = var.waf_rate_limit
+  tags        = local.default_tags
 }
 
 # ==================== Static Frontend (S3 + CloudFront + WAF) ====================
@@ -201,12 +293,44 @@ module "static_frontend" {
 
   name_prefix                = var.project_name
   tags                       = local.default_tags
-    acm_certificate_arn        = local.effective_frontend_acm_arn
+  acm_certificate_arn        = local.effective_frontend_acm_arn
   domain_aliases             = local.effective_domain_aliases
   spa_error_fallback         = var.frontend_spa_error_fallback
   cloudfront_price_class     = var.frontend_cloudfront_price_class
   game_backend_alb_dns       = module.game_backend.alb_dns_name
-  # CloudFront → ALB は HTTP で接続（ALB 証明書は motiondile.net 用で *.elb.amazonaws.com に一致しないため）
   alb_origin_protocol_policy = "http-only"
-  waf_acl_arn                = var.waf_acl_arn
+  waf_acl_arn                = var.enable_waf ? module.waf[0].web_acl_arn : var.waf_acl_arn
+}
+
+# ==================== Monitoring (CloudWatch Alarms + Dashboard) ====================
+
+module "monitoring" {
+  source = "../../modules/monitoring"
+
+  name_prefix      = var.project_name
+  aws_region       = var.aws_region
+  ecs_cluster_name = aws_ecs_cluster.main.name
+  alarm_email      = var.alarm_email
+
+  ecs_services = {
+    "${var.project_name}-game" = {
+      service_name     = module.game_backend.service_name
+      alb_arn_suffix   = module.game_backend.alb_arn_suffix
+      cpu_threshold    = 80
+      memory_threshold = 85
+    }
+    "${var.project_name}-agent" = {
+      service_name     = module.agent.service_name
+      alb_arn_suffix   = module.agent.alb_arn_suffix
+      cpu_threshold    = 80
+      memory_threshold = 85
+    }
+  }
+
+  redis_cluster_id           = var.enable_redis && length(module.redis) > 0 ? module.redis[0].cluster_id : ""
+  enable_redis_alarms        = var.enable_redis
+  cloudfront_distribution_id = var.enable_static_frontend && length(module.static_frontend) > 0 ? module.static_frontend[0].cloudfront_distribution_id : ""
+  enable_cloudfront_alarms   = var.enable_static_frontend
+
+  tags = local.default_tags
 }

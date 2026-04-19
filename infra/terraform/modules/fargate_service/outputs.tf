@@ -23,3 +23,8 @@ output "alb_security_group_id" {
   value       = aws_security_group.alb.id
   description = "ALB 用 SG ID"
 }
+
+output "service_name" {
+  value       = aws_ecs_service.this.name
+  description = "ECS サービス名"
+}
