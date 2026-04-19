@@ -1,6 +1,6 @@
-# Terraform（AWS 向け雛形）
+# Terraform（AWS 新アーキテクチャ）
 
-`game/backend`（Gin + WebSocket）と `Agent`（`/hint`）を **ECS Fargate + ALB** で動かす前提の **dev 向け最小構成** です。本番は WAF / HTTPS 必須・マルチ AZ・Redis 共有状態などを追加してください。
+`game/backend`（Gin + WebSocket）と `Agent`（Bedrock 専用）を **ECS Fargate** で動かす構成です。
 
 ## 前提
 
@@ -11,10 +11,11 @@
 
 | パス | 内容 |
 |------|------|
-| `modules/vpc` | VPC・パブリックサブネット・IGW |
-| `modules/ecr` | ECR リポジトリ 1 個 |
-| `modules/fargate_service` | ECS Fargate 1 サービス + ALB 1 台 |
-| `modules/static_frontend` | フロント用 S3（OAC）+ CloudFront。任意で `/api/*`・`/ws*`・`/healthz` を game-backend ALB へプロキシ（HTTPS ページから HTTP ALB への混合コンテンツを避ける） |
+| `modules/vpc` | VPC・パブリック/プライベートサブネット・IGW・VPC Endpoints |
+| `modules/ecr` | ECR リポジトリ |
+| `modules/fargate_service` | ECS Fargate + ALB + Auto Scaling（internal/HTTPS 対応） |
+| `modules/redis` | ElastiCache for Redis（最小構成） |
+| `modules/static_frontend` | S3 + CloudFront + WAF 対応 |
 | `environments/dev` | dev 環境の束ね |
 
 ## 使い方（例）

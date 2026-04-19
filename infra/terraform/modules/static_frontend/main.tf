@@ -78,7 +78,7 @@ resource "aws_cloudfront_distribution" "site" {
       custom_origin_config {
         http_port                = 80
         https_port               = 443
-        origin_protocol_policy   = "http-only"
+        origin_protocol_policy   = var.alb_origin_protocol_policy
         origin_ssl_protocols     = ["TLSv1.2"]
         origin_read_timeout      = 120
         origin_keepalive_timeout = 5
@@ -160,9 +160,10 @@ resource "aws_cloudfront_distribution" "site" {
   # カスタムドメイン＋ ACM を使う場合のみ。デフォルト証明書のときは空にすること
   aliases = var.domain_aliases
 
-  tags = var.tags
+    # WAF Web ACL
+  web_acl_id = var.waf_acl_arn != "" ? var.waf_acl_arn : null
 
-  depends_on = [aws_s3_bucket_public_access_block.site]
+  tags = var.tags
 }
 
 data "aws_iam_policy_document" "s3_cloudfront" {

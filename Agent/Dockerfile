@@ -1,7 +1,7 @@
 FROM golang:1.24-alpine AS build
 WORKDIR /src
-COPY go.mod ./
-RUN go mod tidy
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
 # ECS Fargate 既定は linux/amd64（exec format error 防止）
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /server ./cmd/server

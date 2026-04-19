@@ -6,12 +6,19 @@ import (
 
 	"agent/internal/compose"
 	"agent/internal/domain"
-	"agent/internal/infrastructure/openai"
+	"agent/internal/llm"
 	"agent/internal/ops"
 )
 
-func TestHintUsecase_GenerateFallsBackWithoutOpenAIClient(t *testing.T) {
-	llmComposer := compose.NewLLMComposer(openai.Noop{})
+// noopLLM は LLM 未設定時と同じ振る舞いをするテスト用スタブ。
+type noopLLM struct{}
+
+func (noopLLM) Generate(_ context.Context, _ llm.PromptInput) (string, error) {
+	return "", context.DeadlineExceeded
+}
+
+func TestHintUsecase_GenerateFallsBackWithoutLLMClient(t *testing.T) {
+	llmComposer := compose.NewLLMComposer(noopLLM{})
 	templateComposer := compose.NewTemplateComposer()
 	historyStore := ops.NewMemoryHintHistoryStore()
 	uc := NewHintUsecase(llmComposer, templateComposer, historyStore)

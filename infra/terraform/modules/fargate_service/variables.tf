@@ -12,7 +12,14 @@ variable "vpc_id" {
 }
 
 variable "public_subnet_ids" {
-  type = list(string)
+  type        = list(string)
+  description = "ALB 用サブネット（internet-facing ALB のときのみ使用）"
+}
+
+variable "task_subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "ECS タスク配置サブネット。空なら public_subnet_ids を使用（後方互換）"
 }
 
 variable "cluster_arn" {
@@ -82,4 +89,85 @@ variable "bedrock_invoke_model_arns" {
   type        = list(string)
   default     = []
   description = "ECS タスクロールに bedrock:InvokeModel を付与する対象（foundation-model ARN のリスト）"
+}
+
+# ============ New Architecture Variables ============
+
+variable "assign_public_ip" {
+  type        = bool
+  default     = false
+  description = "ECS タスクにパブリック IP を割り当てる（private subnet 配置時は false）"
+}
+
+variable "internal" {
+  type        = bool
+  default     = false
+  description = "ALB を内部専用にする（Agent 用）"
+}
+
+variable "alb_idle_timeout" {
+  type        = number
+  default     = 60
+  description = "ALB idle timeout 秒（WebSocket 向けに大きくする）"
+}
+
+variable "alb_ssl_certificate_arn" {
+  type        = string
+  default     = ""
+  description = "ALB に HTTPS listener を追加する場合の ACM 証明書 ARN"
+}
+
+variable "extra_task_security_group_ids" {
+  type        = list(string)
+  default     = []
+  description = "ECS タスクに追加でアタッチする SG ID（Redis や VPC Endpoint 接続用）"
+}
+
+variable "extra_alb_ingress_rules" {
+  type = list(object({
+    from_port       = number
+    to_port         = number
+    protocol        = string
+    cidr_blocks     = optional(list(string), [])
+    security_groups = optional(list(string), [])
+    description     = optional(string, "")
+  }))
+  default     = []
+  description = "ALB SG に追加する ingress ルール"
+}
+
+# ============ Auto Scaling Variables ============
+
+variable "enable_autoscaling" {
+  type        = bool
+  default     = false
+  description = "ECS Service Auto Scaling を有効にする"
+}
+
+variable "autoscaling_min_capacity" {
+  type    = number
+  default = 1
+}
+
+variable "autoscaling_max_capacity" {
+  type    = number
+  default = 10
+}
+
+variable "autoscaling_cpu_target" {
+  type        = number
+  default     = 60
+  description = "CPU 使用率ターゲット (%)"
+}
+
+variable "autoscaling_memory_target" {
+  type        = number
+  default     = 70
+  description = "メモリ使用率ターゲット (%)"
+}
+
+variable "autoscaling_requests_per_target" {
+  type        = number
+  default     = 0
+  description = "ALB RequestCountPerTarget ターゲット（0 = 無効）"
 }

@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
 
 	"agent/internal/compose"
 	"agent/internal/config"
 	"agent/internal/infrastructure/bedrock"
-	"agent/internal/infrastructure/openai"
-	"agent/internal/llm"
 	agenthttp "agent/internal/interface/http"
+	"agent/internal/llm"
 	"agent/internal/ops"
 	"agent/internal/usecase"
 )
@@ -23,13 +21,12 @@ func main() {
 	if cfg.AWSRegion != "" && bedrockModel == "" {
 		bedrockModel = config.DefaultBedrockModel
 	}
-	bedrockDisabled := os.Getenv("BEDROCK_DISABLED") == "1" || os.Getenv("BEDROCK_DISABLED") == "true"
 
 	ctx := context.Background()
 	var ai llm.Client
 	llmMode := "fallback"
 
-	if cfg.AWSRegion != "" && bedrockModel != "" && !bedrockDisabled {
+	if cfg.AWSRegion != "" && bedrockModel != "" {
 		bc, err := bedrock.NewClient(ctx, cfg.AWSRegion, bedrockModel)
 		if err != nil {
 			log.Printf("[agent] Bedrock client init failed: %v", err)
@@ -39,15 +36,10 @@ func main() {
 			log.Printf("[agent] using Bedrock model %s (region=%s)", bedrockModel, cfg.AWSRegion)
 		}
 	}
-	if ai == nil && cfg.OpenAIKey != "" {
-		ai = openai.NewClient(cfg.OpenAIKey)
-		llmMode = "openai"
-		log.Printf("[agent] using OpenAI Chat Completions (gpt-4o-mini)")
-	}
 	if ai == nil {
-		ai = openai.Noop{}
+		ai = noopClient{}
 		llmMode = "fallback"
-		log.Printf("[agent] no LLM backend; hints/themes use templates or local fallback (set AWS_REGION + IAM for Bedrock, or OPENAI_API_KEY)")
+		log.Printf("[agent] no LLM backend; hints/themes use templates or local fallback (set AWS_REGION + IAM for Bedrock)")
 	}
 
 	llmComposer := compose.NewLLMComposer(ai)
@@ -68,7 +60,6 @@ func main() {
 			"mode":              llmMode,
 			"bedrockModel":      bedrockModel,
 			"bedrockConfigured": llmMode == "bedrock",
-			"openaiConfigured":  cfg.OpenAIKey != "",
 			"awsRegion":         cfg.AWSRegion,
 		})
 	})
@@ -78,4 +69,11 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+// noopClient は LLM 未設定時のフォールバック。Usecase がテンプレートフォールバックへ回す。
+type noopClient struct{}
+
+func (noopClient) Generate(ctx context.Context, input llm.PromptInput) (string, error) {
+	return "", context.DeadlineExceeded
 }
