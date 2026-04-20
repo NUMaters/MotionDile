@@ -13,6 +13,7 @@
     "down:all": "node scripts/down-all.mjs",
     "build": "vite build",
     "build:aws": "VITE_GAME_CLOUDFRONT_PROXY=true vite build",
+    "build:fly": "vite build",
     "preview": "vite preview",
     "test:clear-cache": "node -e \"require('node:fs').rmSync('node_modules/.vitest', { recursive: true, force: true })\"",
     "test:clear-coverage": "node -e \"const fs=require('node:fs'); fs.rmSync('coverage', { recursive: true, force: true }); fs.rmSync('game/backend/coverage.out', { force: true });\"",

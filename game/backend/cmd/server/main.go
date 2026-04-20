@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 	"net/http"
 	"os"
@@ -23,6 +24,8 @@ import (
 
 func main() {
 	redisAddr := strings.TrimSpace(os.Getenv("GAME_REDIS_ADDR"))
+	redisPassword := strings.TrimSpace(os.Getenv("GAME_REDIS_PASSWORD"))
+	redisTLS := strings.TrimSpace(os.Getenv("GAME_REDIS_TLS")) == "true"
 	keyPrefix := getenv("GAME_REDIS_KEY_PREFIX", "waniar")
 
 	var rdb *redis.Client
@@ -31,7 +34,14 @@ func main() {
 	var pres *redispkg.PresenceTracker
 
 	if redisAddr != "" {
-		rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
+		opts := &redis.Options{Addr: redisAddr}
+		if redisPassword != "" {
+			opts.Password = redisPassword
+		}
+		if redisTLS {
+			opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		rdb = redis.NewClient(opts)
 		if err := rdb.Ping(context.Background()).Err(); err != nil {
 			log.Fatalf("[game-backend] redis ping %s: %v", redisAddr, err)
 		}

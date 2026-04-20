@@ -1,0 +1,37 @@
+# flyctl launch added from .gitignore
+**/node_modules
+**/dist
+**/coverage
+# CMake 外付けビルド（compile_commands.json もここに出る）
+**/build
+**/Agent/tmp
+**/game/backend/tmp
+**/Agent/server
+**/game/backend/server
+**/.DS_Store
+**/**/.DS_Store
+# 開発時に modeling からコピーされる（約20MB）。リポジトリには含めない
+**/public/modeling/Wani_game.glb
+**/medea-pipeline/data/hand-dataset.json
+
+# Environment variables (secrets/local settings)
+**/.env
+**/**/.env
+**/.env.*
+**/**/.env.*
+!**/.env.example
+!**/**/.env.example
+
+# flyctl launch added from infra/terraform/.gitignore
+infra/terraform/**/.terraform
+infra/terraform/**/.terraform.lock.hcl
+infra/terraform/**/*.tfstate
+infra/terraform/**/*.tfstate.*
+infra/terraform/**/*.tfvars
+!infra/terraform/**/*.tfvars.example
+infra/terraform/**/crash.log
+infra/terraform/**/override.tf
+infra/terraform/**/override.tf.json
+infra/terraform/**/*_override.tf
+infra/terraform/**/*_override.tf.json
+fly.toml

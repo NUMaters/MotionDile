@@ -88,7 +88,7 @@
 - **Go + Gin** — `game/backend` の REST API（`POST /api/v1/rooms/resolve` で `preferredRoomId` が空なら**待機中の部屋を検索して割り当て、なければ新規作成**。`excludeRoomId` を付けると（自動検索時）その ID の待機ルームはスキップし、**試合終了・`room_closed` などの切断**のあとだけフロントが送り、**ホームに戻る**操作では送らず**同じ待機ロビーへ再参加**しやすくする。**`preferredRoomId` が空でないときは常にその部屋 ID を返す**（対戦・投票・結果中も別ロビーへ誘導しない）。新規参加可否は `POST /api/v1/rooms/:roomID/players` の `Join` が判定する。フロントは `resolve` 後の部屋 ID を **sessionStorage** に保持し、**リロード時の `beforeunload` では `DELETE` 退出を送らない**（`cleanup({ notifyServerLeave: false })`）ので、進行中マッチのメンバーがサーバに残り、再び「ゲーム参加」で同じ部屋へ復帰しやすい。**一度参加に成功すると `waniar:auto-rejoin-multiplayer` フラグを立て、モデル読み込み完了後に `maybeResumeMultiplayerAfterReload` が待機画面のまま `initMultiplayer` を自動実行**し、ボタン操作なしで同じ部屋へ再接続する（失敗時はホームへ戻す）。明示退出・試合終了の `cleanup()` では `DELETE` とストレージ削除。`POST /api/v1/rooms/:roomID/players` で参加、退出、スナップショット）
 - **Redis（go-redis v9、任意）** — 環境変数 `GAME_REDIS_ADDR` を設定すると `game/backend` は **Redis** に部屋の正本を置き、**Pub/Sub**（`{prefix}:bus:room:{roomId}`）で WebSocket 配信を全インスタンスへ伝え、**ZSET** `{prefix}:timers:due` と `internal/scheduler` のワーカー（SETNX ロック）でカウントダウン・対戦終了・投票締め・結果表示後の解体を処理する。オンライン人数は **ZSET プレゼンス**で共有。`GAME_REDIS_KEY_PREFIX` でキー接頭辞を変更可能（既定 `waniar`）。未設定時は **インメモリ `RoomRepository`** とプロセス内タイマーのみ
 - **WebSocket (gorilla/websocket)** — 部屋単位のリアルタイム位置同期（マルチプレイ表示）。`move` ペイロードに `neckYaw` / `neckPitch`（手トラッキング由来の首）と待機ゆらぎ `idleBob` / `idlePitch` / `idleRoll` を含める。リモート側の首姿勢はローカルと同じ **`Euler` 順 `ZXY`（`composeNeckDeltaQuaternion`）**で頭ボーンに適用する（`YXZ` で組むと首だけ大きく崩れるため統一が必要）。対戦中は `gateway.go` が `WANIAR_HINT_INTERVAL_SEC`（既定 **15 秒**）ごとに Agent ヒントを `hint` で配信（**ヒント生成は非同期**にし、対戦終了時刻と重なっても `vote_start` が遅延しないようにしている）。**待機（`waiting`）・カウントダウン（`countdown`）中は**、接続の増減のたびに `gateway.go` の `checkGameTransition` が `playerCount` を更新した **`game_state` をルーム全員へブロードキャスト**し、待機 UI の人数がリアルタイムで揃う。**WebSocket が閉じたとき**、`readPump` の後処理は **フェーズが待機（`waiting`）のときだけ** `Leave`（REST の部屋メンバー削除）を呼ぶ。カウントダウン以降（対戦・投票・結果）で通信が切れてもメンバーは残るため、**同じ `playerId` で「ゲーム参加」→ REST / WS 再接続**すれば復帰できる（明示退出・`DELETE /players/:id`・ホームに戻る等は従来どおりメンバー削除）。**再接続時**は `game_start` が再送されないため、`buildGameStatePayload` の `game_state` に **`enemyPlayerId` / `allyTheme` / `enemyTheme`** と **`players` 各要素の `playerId`** を含め、フロントの `handleGameState` が **`playing` で対戦 HUD**、**`voting` で投票画面**を復元する。**位置**は REST / WS の `snapshot` で自プレイヤーの `lastJoinMyPlayer` を更新し、`trySpawnLocalPlayerAfterJoin` が地形準備と **`multiplayerSessionActive` 確定**まで再試行。ページ離脱直前のローカル座標は **`waniar:last-mp-spawn`** に退避し、サーバ値が欠ける場合のフォールバックに使う。**敵ワニ抽選**は `startGame` で WebSocket 接続中のユニーク `playerId` を名前順に並べたうえで、**`crypto/rand.Int`（`[0,n)` の一様整数）**でインデックスを決め敵を選ぶ（従来の 8 バイト `% n` より偏りが出にくい）。**カウントダウン中に WS が切れると**直前までの人数より参加者が減り、その時点で接続しているプレイヤーだけから選ぶ（1 人だけなら常にその人が敵になる）
-- **Agent Server (Go + OpenAI gpt-4o-mini)** — `Agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離
+- **Agent Server (Go + OpenAI gpt-4o-mini / Bedrock)** — `Agent/` に独立したヒント生成マイクロサービス。ゲームサーバーからプレイヤー全員の座標・行動・経過時間を受け取り、OpenAI API（または Amazon Bedrock）でプロンプトエンジニアリングに基づいた自然言語ヒントを生成して返す。API障害時はルールベースのフォールバックヒントを返却。クリーンアーキテクチャで domain/usecase/infrastructure/interface の4層に責務分離。`OPENAI_API_KEY` 設定時は OpenAI を優先（既定: gpt-4o-mini）、未設定で `AWS_REGION` があれば Bedrock にフォールバック
 - **表示名・投票UI** — 参加時に `displayName` を REST / WebSocket クエリで送信し、`PlayerState` に保存。**他プレイヤー**の頭上名のみ **CSS2DRenderer**（`name-labels.ts`、**自キャラには名前ラベルを付けない**）。スナップショット適用をリモート生成より先に行い、空名は `resolveDisplayName` で補完。ラベル層は **z-index** で WebGL キャンバスより手前（iOS で隠れないよう明示）。**プレイ中に後から入室したプレイヤー**は REST の部屋メンバーには載るが、`game_start` 時点の WebSocket 接続者だけを `GameState.roundPlayerIds` に記録し、**投票対象・投票者数・敵抽選・Agent ヒントの対象プレイヤー**はこのラウンド参加者に限定する（`gateway.go` / `room_usecase.go`）。**プレイヤー識別色**は `entity/player_state.go` の高彩度 `PlayerColors`（**青系はワニ本体と区別しづらいため含めない**）を割り当て、`character.ts` の `BODY_TINT_MAP_BLEND` / `BODY_TINT_SOLID_BLEND` と emissive でワニに乗せる（PBR に加え Lambert/Phong も対象。口内メッシュの色スキップはピンク系に限定し体表の誤判定を防ぐ）。`network.ts` の `applyLocalPlayerColorTint` で割当 hex が更新されたとき体へ再適用する。待機 UI のドット色と同じ hex を `name-labels.ts` の CSS2D ラベル枠（`applyPlayerLabelAccent`）にも用い、体色と表示を揃える。`vote_result` WebSocket には `entity.VoteResult` として `enemyColor`（`TallyVotes` がスナップショットから取得）を含め、**結果画面**でも投票カードと同じ `mountVotePreviews` で敵ワニのオフスクリーン画像を表示する（`screens.ts` の `showResults`）。投票カードは iOS 等での複数 WebGL コンテキスト不具合を避けるため、**単一の `WebGLRenderer` で各プレイヤー分を順にオフスクリーン描画し JPEG 化**（`vote-previews.ts`、体揺れは付けず静止サムネ）。プレビュー専用に **PMREMGenerator + RoomEnvironment** で `scene.environment` を生成し PBR を明るく表示、カメラは狭い FOV・近い距離で枠内を大きく取る。モデル未読込時は色＋絵文字フォールバック
 - **行動テーマシステム** — ゲーム開始時に市民チームと敵ワニにそれぞれ異なる「行動ミッション（テーマ）」をランダム割り当て（`usecase/themes.go`）。例:「障害物の近くを移動する」「マップの外周を歩き回る」等。各プレイヤーには自分のテーマのみ表示され、陣営は直接通知されない。プレイヤーはテーマに沿って行動しつつ、**異なる動きをしている敵ワニ**を探す。テーマは `game_start` WebSocket メッセージで各クライアントに送信、`GameState` に `AllyTheme`/`EnemyTheme` として保存される
 - **Agent ヒント** — プロンプト組み立て（`Agent/internal/usecase/prompt.go`）では、**市民テーマと敵テーマの両方**を受け取り、敵の行動がテーマと合わないことを示唆するヒントを生成。ワールド **Y は海面 0 基準ではない**ため「高所」判定に絶対 Y を使わず、**アニメ名に Jump が含まれるときのみ**空中・ジャンプ寄りの文脈を付与。フロントは `screens.ts` の `showHint` が Web Animations API で、**行動テーマバッジ直下**（`#agent-hint-danmaku`）へ**弾幕風の横スクロール**で表示（従来の画面中央ポップアップは廃止）
@@ -154,11 +154,56 @@ Hips
     └── R_frontleg → R_frontleg0 → R_frontleg1 → R_frontleg2
 ```
 
-## AWS インフラ（Terraform）
+## インフラ構成
 
-`infra/terraform/` に AWS 環境へのデプロイ用 Terraform コードがあります。
+### 構成 A: Fly.io + Cloudflare Pages（無料〜格安構成 / 推奨）
 
-### アーキテクチャ
+```
+ユーザー (ブラウザ)
+  → Cloudflare DNS (motiondile.net)
+    → Cloudflare Pages (Vue3 + Three.js SPA)
+    → Fly.io nrt (Go: game-backend + agent)
+       → OpenAI API (gpt-4o-mini, ヒント・テーマ生成)
+```
+
+| リソース | サービス | 用途 |
+|---|---|---|
+| フロントエンド | Cloudflare Pages | SPA 配信 + CDN + DDoS 保護 |
+| DNS / SSL | Cloudflare | ドメイン管理・自動 HTTPS |
+| バックエンド | Fly.io (shared-cpu-1x, 256MB) | game-backend + agent 統合コンテナ |
+| Redis | Upstash | 状態共有・Pub/Sub |
+| AI | OpenAI gpt-4o-mini | ヒント・テーマ生成 |
+
+#### デプロイ手順（Fly.io + Cloudflare Pages）
+
+```bash
+# --- バックエンド (Fly.io) ---
+# 1. Fly.io CLI インストール後、アプリ作成
+fly launch --name motiondile --region nrt --no-deploy
+
+# 2. シークレット設定
+fly secrets set OPENAI_API_KEY=your-openai-api-key
+
+# 3. デプロイ
+fly deploy
+
+# --- フロントエンド (Cloudflare Pages) ---
+# 1. npm install && npm run build:model
+# 2. Cloudflare Pages でプロジェクト作成
+#    - ビルドコマンド: npm run build:fly
+#    - 出力ディレクトリ: dist
+#    - 環境変数:
+#      VITE_GAME_API_BASE=https://motiondile.fly.dev/api/v1
+#      VITE_GAME_WS_BASE=wss://motiondile.fly.dev/ws
+# 3. カスタムドメイン設定 (motiondile.net)
+
+# --- 手動デプロイ ---
+npm run build:fly
+npx wrangler pages deploy dist --project-name=motiondile
+fly deploy
+```
+
+### 構成 B: AWS（Terraform / フル機能構成）
 
 ```
                     ┌──────────────────────────────┐
@@ -181,26 +226,26 @@ Hips
 │CPU 512     │    │CPU 256     │
 │MEM 1024    │    │MEM 512     │
 └────────────┘    └────────────┘
-                       │
-                       ▼
-               Amazon Bedrock
-              (Claude 3 Haiku)
+       │               │
+       ▼               ▼
+  ElastiCache     Amazon Bedrock
+   (Redis)       (Claude 3 Haiku)
 ```
-
-### 使用技術
 
 | リソース | サービス | 用途 |
 |---|---|---|
-| ネットワーク | VPC + 2 Public Subnets + IGW | Fargate タスク・ALB の配置 |
+| ネットワーク | VPC + Public/Private Subnets + VPC Endpoints | タスク・ALB の配置 |
 | コンテナ基盤 | ECS Fargate | game-backend / agent の実行 |
 | コンテナレジストリ | ECR | Docker イメージ管理 |
-| ロードバランサ | ALB | game-backend / agent への HTTP ルーティング |
-| 静的配信 | S3 + CloudFront | フロントエンド SPA + API/WS プロキシ |
-| AI | Amazon Bedrock (Claude 3 Haiku) | ゲーム内ヒント生成 |
-| ログ | CloudWatch Logs | ECS タスクのログ収集 |
-| IAM | タスク実行ロール / タスクロール | ECR pull, Bedrock InvokeModel |
+| ロードバランサ | ALB x2 | game-backend (public) / agent (internal) |
+| 静的配信 | S3 + CloudFront + WAF | フロントエンド SPA + API/WS プロキシ |
+| AI | Amazon Bedrock (Claude 3.5 Haiku) | ゲーム内ヒント生成 |
+| Redis | ElastiCache (cache.t3.micro) | 状態共有・Pub/Sub |
+| DNS | Route 53 | ドメイン管理 |
+| 監視 | CloudWatch + SNS | ダッシュボード・アラーム |
+| IaC | Terraform >= 1.5.0 | インフラのコード管理 |
 
-### デプロイ手順
+#### デプロイ手順（AWS）
 
 ```bash
 cd infra/terraform/environments/dev
@@ -254,7 +299,7 @@ npm run viewer        # http://localhost:3000/viewer でビューア起動
 npm run dev           # Vite のみ（5173）。**このだけだと** `127.0.0.1:8090` の game backend が無く `/game-api` プロキシが ECONNREFUSED になる → `dev:game-backend` か `dev:all` を別途起動
 npm run dev:game-backend  # マルチプレイ同期バックエンド（Gin + WebSocket, 8090, air でホットリロード）
 npm run dev:agent     # ヒント生成 Agent（8091, air でホットリロード）
-npm run dev:all       # game backend(8090) + agent(8091) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）。Go バックエンドは air で常駐し、初回ビルド後は差分だけ素早く再起動。LLM ヒント・テーマを使う場合は **`Agent/.env` に `OPENAI_API_KEY`** を書く
+npm run dev:all       # game backend(8090) + agent(8091) + Vite frontend(5173~) を同時起動（macOS / Windows 共通）。Go バックエンドは air で常駐し、初回ビルド後は差分だけ素早く再起動。LLM ヒント・テーマを使う場合は **`Agent/.env` に `OPENAI_API_KEY`** を書く（または `AWS_REGION` + `BEDROCK_MODEL_ID` で Bedrock を使用）
 npm run down:all      # dev:all で使う 5173/8090/8091 を一括停止（`scripts/down-all.mjs` + kill-port。macOS / Windows 共通）
 ```
 
@@ -316,15 +361,20 @@ WaniAR/
 │   ├── scripts/
 │   │   └── build-wani-game-model.mjs  ← モデル生成パイプライン
 │   └── Meshy_AI_…_fbx/       ← 参考用 FBX + テクスチャ
-├── Agent/                     ← AIヒント生成マイクロサービス（Go + OpenAI）
+├── Agent/                     ← AIヒント生成マイクロサービス（Go + OpenAI / Bedrock）
 │   ├── cmd/server/main.go     ← エントリポイント
 │   ├── internal/
 │   │   ├── config/            ← .env 読み込み・設定管理
 │   │   ├── domain/            ← リクエスト/レスポンス型定義
-│   │   ├── infrastructure/openai/ ← OpenAI APIクライアント
-│   │   ├── interface/http/    ← HTTPハンドラ (POST /hint)
+│   │   ├── infrastructure/openai/  ← OpenAI API クライアント
+│   │   ├── infrastructure/bedrock/ ← Amazon Bedrock クライアント（AWS構成用）
+│   │   ├── interface/http/    ← HTTPハンドラ (POST /hint, POST /themes)
 │   │   └── usecase/           ← プロンプト構築・ヒント生成ロジック
-│   └── .env                   ← OPENAI_API_KEY
+│   └── .env.example           ← OPENAI_API_KEY
+├── deploy/                    ← Fly.io デプロイ用
+│   ├── Dockerfile             ← game-backend + agent 統合コンテナ
+│   └── start.sh               ← 両プロセス起動スクリプト
+├── fly.toml                   ← Fly.io 設定
 ├── medea-pipeline/            ← 任意の補助ツール（収集 UI 等。ゲームの手制御は MediaPipe のみ）
 │   ├── collect.html
 │   ├── backend/

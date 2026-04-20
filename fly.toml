@@ -1,0 +1,26 @@
+app = 'motiondile'
+primary_region = 'nrt'
+
+[build]
+  dockerfile = 'deploy/Dockerfile'
+
+[env]
+  GAME_BACKEND_ADDR = '0.0.0.0:8090'
+  AGENT_PORT = '8091'
+  AGENT_URL = 'http://127.0.0.1:8091'
+
+[http_service]
+  internal_port = 8090
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'

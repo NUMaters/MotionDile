@@ -9,6 +9,7 @@ import (
 	"agent/internal/compose"
 	"agent/internal/config"
 	"agent/internal/infrastructure/bedrock"
+	"agent/internal/infrastructure/openai"
 	agenthttp "agent/internal/interface/http"
 	"agent/internal/llm"
 	"agent/internal/ops"
@@ -25,21 +26,38 @@ func main() {
 	ctx := context.Background()
 	var ai llm.Client
 	llmMode := "fallback"
+	llmModelName := ""
 
-	if cfg.AWSRegion != "" && bedrockModel != "" {
+	// OpenAI を優先（OPENAI_API_KEY が設定されていれば）
+	if cfg.OpenAIAPIKey != "" {
+		oc, err := openai.NewClient(cfg.OpenAIAPIKey, cfg.OpenAIModel)
+		if err != nil {
+			log.Printf("[agent] OpenAI client init failed: %v", err)
+		} else {
+			ai = oc
+			llmMode = "openai"
+			llmModelName = cfg.OpenAIModel
+			log.Printf("[agent] using OpenAI model %s", cfg.OpenAIModel)
+		}
+	}
+
+	// OpenAI が未設定なら Bedrock にフォールバック
+	if ai == nil && cfg.AWSRegion != "" && bedrockModel != "" {
 		bc, err := bedrock.NewClient(ctx, cfg.AWSRegion, bedrockModel)
 		if err != nil {
 			log.Printf("[agent] Bedrock client init failed: %v", err)
 		} else {
 			ai = bc
 			llmMode = "bedrock"
+			llmModelName = bedrockModel
 			log.Printf("[agent] using Bedrock model %s (region=%s)", bedrockModel, cfg.AWSRegion)
 		}
 	}
+
 	if ai == nil {
 		ai = noopClient{}
 		llmMode = "fallback"
-		log.Printf("[agent] no LLM backend; hints/themes use templates or local fallback (set AWS_REGION + IAM for Bedrock)")
+		log.Printf("[agent] no LLM backend; hints/themes use templates or local fallback (set OPENAI_API_KEY or AWS_REGION + IAM for Bedrock)")
 	}
 
 	llmComposer := compose.NewLLMComposer(ai)
@@ -56,11 +74,9 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":                true,
-			"mode":              llmMode,
-			"bedrockModel":      bedrockModel,
-			"bedrockConfigured": llmMode == "bedrock",
-			"awsRegion":         cfg.AWSRegion,
+			"ok":    true,
+			"mode":  llmMode,
+			"model": llmModelName,
 		})
 	})
 
@@ -71,7 +87,6 @@ func main() {
 	}
 }
 
-// noopClient は LLM 未設定時のフォールバック。Usecase がテンプレートフォールバックへ回す。
 type noopClient struct{}
 
 func (noopClient) Generate(ctx context.Context, input llm.PromptInput) (string, error) {
