@@ -100,7 +100,7 @@ function copyModelingAssets() {
       const srcDir = join(root, 'modeling');
       const outDir = join(root, 'dist', 'modeling');
       mkdirSync(outDir, { recursive: true });
-      const files = ['Wani_game.glb', 'Wani_game.meta.json', 'viewer.html', 'Walking_wani.glb'];
+      const files = ['Wani_game.glb', 'Wani_game.meta.json'];
       for (const f of files) {
         const src = join(srcDir, f);
         if (existsSync(src)) copyFileSync(src, join(outDir, f));

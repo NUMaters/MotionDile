@@ -224,10 +224,12 @@ export function initInput(): void {
     }
   }, { passive: true, capture: true });
 
+  const gameKeys = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
   window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
     if (e.code === 'KeyM') manualMouthOpen = !manualMouthOpen;
     if (e.code === 'Space') jumpPending = true;
+    if (gameKeys.has(e.code)) e.preventDefault();
   });
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 

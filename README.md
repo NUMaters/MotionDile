@@ -156,22 +156,23 @@ Hips
 
 ## インフラ構成
 
-### 構成 A: Fly.io + Cloudflare Pages（無料〜格安構成 / 推奨）
+### 構成 A: Fly.io + Cloudflare Pages（無料〜格安構成 / 本番稼働中）
 
 ```
 ユーザー (ブラウザ)
-  → Cloudflare DNS (motiondile.net)
-    → Cloudflare Pages (Vue3 + Three.js SPA)
-    → Fly.io nrt (Go: game-backend + agent)
-       → OpenAI API (gpt-4o-mini, ヒント・テーマ生成)
+  → Cloudflare Pages (motiondile.pages.dev)
+     Vue3 + Three.js SPA 配信 + CDN + 自動 HTTPS
+  → Fly.io NRT (motiondile.fly.dev)
+     Go: game-backend (:8090) + agent (:8091) 統合コンテナ
+     インメモリ状態管理（Redis なし・単一インスタンス）
+     → OpenAI API (gpt-4o-mini, ヒント・テーマ生成)
 ```
 
 | リソース | サービス | 用途 |
 |---|---|---|
-| フロントエンド | Cloudflare Pages | SPA 配信 + CDN + DDoS 保護 |
+| フロントエンド | Cloudflare Pages (`motiondile.pages.dev`) | SPA 配信 + CDN + DDoS 保護 |
 | DNS / SSL | Cloudflare | ドメイン管理・自動 HTTPS |
-| バックエンド | Fly.io (shared-cpu-1x, 256MB) | game-backend + agent 統合コンテナ |
-| Redis | Upstash | 状態共有・Pub/Sub |
+| バックエンド | Fly.io (`motiondile.fly.dev`, shared-cpu-1x, 256MB, NRT) | game-backend + agent 統合コンテナ (インメモリ状態管理) |
 | AI | OpenAI gpt-4o-mini | ヒント・テーマ生成 |
 
 #### デプロイ手順（Fly.io + Cloudflare Pages）
@@ -188,20 +189,26 @@ fly secrets set OPENAI_API_KEY=your-openai-api-key
 fly deploy
 
 # --- フロントエンド (Cloudflare Pages) ---
-# 1. npm install && npm run build:model
-# 2. Cloudflare Pages でプロジェクト作成
-#    - ビルドコマンド: npm run build:fly
-#    - 出力ディレクトリ: dist
-#    - 環境変数:
-#      VITE_GAME_API_BASE=https://motiondile.fly.dev/api/v1
-#      VITE_GAME_WS_BASE=wss://motiondile.fly.dev/ws
-# 3. カスタムドメイン設定 (motiondile.net)
+# 1. ビルド（Fly.io の URL を環境変数で指定）
+VITE_GAME_API_BASE=https://motiondile.fly.dev/api/v1 \
+VITE_GAME_WS_BASE=wss://motiondile.fly.dev/ws \
+npm run build
 
-# --- 手動デプロイ ---
-npm run build:fly
-npx wrangler pages deploy dist --project-name=motiondile
-fly deploy
+# 2. プロダクションとしてデプロイ
+npx wrangler pages project create motiondile  # 初回のみ
+npx wrangler pages deploy dist --project-name=motiondile --branch=main --commit-dirty=true
+
+# カスタムドメイン (任意): Cloudflare Pages の設定からドメインを追加
 ```
+
+#### コスト概算（構成 A）
+
+| 項目 | 月額（低トラフィック時） |
+|---|---|
+| Cloudflare Pages | 無料 |
+| Fly.io (shared-cpu-1x, 256MB) | 無料枠内（1 VM） |
+| OpenAI API (gpt-4o-mini) | 従量 〜$1–3 |
+| **合計** | **〜$0–3/月** |
 
 ### 構成 B: AWS（Terraform / フル機能構成）
 
@@ -352,15 +359,6 @@ WaniAR/
 │       ├── cmd/server/main.go
 │       ├── internal/...
 │       └── README.md
-├── modeling/                 ← モデル調整・ビューアをすべてここに集約
-│   ├── README.md             ← modeling 用の短いガイド
-│   ├── Walking_wani.glb      ← ソースモデル（歩行アニメーション付き）
-│   ├── Wani_game.glb         ← ゲーム用モデル（8クリップ、自動生成）
-│   ├── Wani_game.meta.json
-│   ├── viewer.html           ← Three.js ビューア（CDN の Three.js、`Wani_game.glb` を相対パスで読込）
-│   ├── scripts/
-│   │   └── build-wani-game-model.mjs  ← モデル生成パイプライン
-│   └── Meshy_AI_…_fbx/       ← 参考用 FBX + テクスチャ
 ├── Agent/                     ← AIヒント生成マイクロサービス（Go + OpenAI / Bedrock）
 │   ├── cmd/server/main.go     ← エントリポイント
 │   ├── internal/
@@ -372,9 +370,21 @@ WaniAR/
 │   │   └── usecase/           ← プロンプト構築・ヒント生成ロジック
 │   └── .env.example           ← OPENAI_API_KEY
 ├── deploy/                    ← Fly.io デプロイ用
-│   ├── Dockerfile             ← game-backend + agent 統合コンテナ
-│   └── start.sh               ← 両プロセス起動スクリプト
-├── fly.toml                   ← Fly.io 設定
+│   ├── Dockerfile             ← game-backend + agent 統合マルチステージビルド
+│   └── start.sh               ← agent (bg) + game-backend (fg) 起動スクリプト
+├── fly.toml                   ← Fly.io 設定（NRT リージョン, shared-cpu-1x, 256MB）
+├── infra/                     ← AWS 構成（Terraform）
+│   └── terraform/
+│       └── environments/dev/  ← main.tf, variables.tf, terraform.tfvars
+├── modeling/                 ← モデル調整・ビューアをすべてここに集約
+│   ├── README.md             ← modeling 用の短いガイド
+│   ├── Walking_wani.glb      ← ソースモデル（歩行アニメーション付き）
+│   ├── Wani_game.glb         ← ゲーム用モデル（8クリップ、自動生成）
+│   ├── Wani_game.meta.json
+│   ├── viewer.html           ← Three.js ビューア（CDN の Three.js、`Wani_game.glb` を相対パスで読込）
+│   ├── scripts/
+│   │   └── build-wani-game-model.mjs  ← モデル生成パイプライン
+│   └── Meshy_AI_…_fbx/       ← 参考用 FBX + テクスチャ
 ├── medea-pipeline/            ← 任意の補助ツール（収集 UI 等。ゲームの手制御は MediaPipe のみ）
 │   ├── collect.html
 │   ├── backend/
@@ -383,8 +393,11 @@ WaniAR/
 │   ├── data/
 │   ├── models/
 │   └── scripts/
+├── public/
+│   ├── _redirects             ← Cloudflare Pages SPA フォールバック
+│   ├── _headers               ← Cloudflare Pages セキュリティ・キャッシュヘッダー
+│   └── models/                ← 互換用（空でも可）
 ├── index.html                ← Vite エントリ（`#app` に Vue をマウント → `main.ts`）
-├── public/models/             ← 互換用（空でも可）
 ├── vite.config.js
 ├── package.json
 └── README.md
